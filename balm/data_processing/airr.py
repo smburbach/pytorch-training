@@ -33,15 +33,17 @@ import abutils
 def transform_airr(
     airr_data: str,
     output_dir: str,
-    keep_paired_csv: bool = True,
-    keep_sorted_airr: bool = False,
     temp_dir: Optional[str] = None,
+    sep_token: str = "</s>",
     missing_chain_token: str = "<unk>",
     id_key: str = "sequence_id",
     sequence_key: str = "sequence_aa",
     locus_key: str = "locus",
     id_delim: str = "_",
     id_delim_occurence: int = 1,
+    shuffle_csv: bool = True,
+    keep_paired_csv: bool = True,
+    keep_sorted_airr: bool = False,
     debug: bool = False,
 ) -> str:
     # process data input
@@ -68,19 +70,27 @@ def transform_airr(
             csv_dir=csv_dir,
             delim=id_delim,
             delim_occurence=id_delim_occurence,
+            shuffle=shuffle_csv,
+            debug=debug,
             **positions,
         )
         roberta_txt = build_roberta_txt(
             paired_csv=paired_csv,
             output_dir=output_dir,
+            sep_token=sep_token,
             missing_chain_token=missing_chain_token,
         )
+        if not keep_sorted_airr:
+            os.remove(sorted_file)
+        if not keep_paired_csv:
+            os.remove(paired_csv)
 
 
 def sort_airr_file(
     airr_file: str, sort_dir: str, id_pos: int = 0, debug: bool = False
 ) -> str:
-    sorted_file = os.path.join(sort_dir, os.path.basename(airr_file))
+    bname = os.path.basename(airr_file).replace(".tsv", "")
+    sorted_file = os.path.join(sort_dir, f"{bname}.csv")
     sort_cmd = f"tail -n +2 {airr_file} | "
     sort_cmd += f'sort -t"\t" -k {id_pos + 1},{id_pos + 1} >> {sorted_file}'
     p = sp.Popen(sort_cmd, stdout=sp.PIPE, stderr=sp.PIPE, shell=True)
@@ -97,8 +107,10 @@ def make_paired_csv(
     id_pos: int = 0,
     seq_pos: int = 3,
     locus_pos: int = 61,
+    shuffle: bool = True,
     delim: str = "_",
     delim_occurence: int = 1,
+    debug: bool = False,
 ):
     csv_file = os.path.join(csv_dir, os.path.basename(sorted_file))
     params = {
@@ -129,13 +141,45 @@ def make_paired_csv(
             # process the last line(s)
             csv_line = build_csv_line(pair)
             csv.write(csv_line + "\n")
+    if shuffle:
+        shuf_cmd = f"cat {csv_file} | shuf -o {csv_file}"
+        p = sp.Popen(shuf_cmd, stdout=sp.PIPE, stderr=sp.PIPE, shell=True)
+        stdout, stderr = p.communicate()
+        if debug:
+            print(stdout)
+            print(stderr)
     return csv_file
 
 
 def build_roberta_txt(
-    paired_csv: str, output_dir: str, missing_chain_token: str = "<unk>"
+    paired_csv: str,
+    output_dir: str,
+    sep_token: str = "</s>",
+    missing_chain_token: str = "<unk>",
 ):
-    pass
+    bname = os.path.basename(paired_csv).replace(".csv", "")
+    roberta_file = os.path.join(output_dir, f"{bname}.txt")
+    with open(roberta_file, "w") as roberta:
+        with open(paired_csv, "r") as csv:
+            for line in csv:
+                if l := line.strip().split(","):
+                    igh_seq = l[2].strip()
+                    igk_seq = l[4].strip()
+                    igl_seq = l[6].strip()
+                    if not any([igh_seq, igk_seq, igl_seq]):
+                        continue
+                    if igh_seq:
+                        heavy = igh_seq
+                    else:
+                        heavy = missing_chain_token
+                    if not any([igk_seq, igl_seq]):
+                        light = missing_chain_token
+                    elif igk_seq:
+                        light = igk_seq
+                    else:
+                        light = igl_seq
+                roberta.write(f"{heavy}{sep_token}{light}\n")
+    return roberta_file
 
 
 def get_column_positions(
