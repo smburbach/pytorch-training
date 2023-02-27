@@ -257,7 +257,54 @@ def make_paired_csv(
     delim: str = "_",
     delim_occurence: int = 1,
     debug: bool = False,
-):
+) -> str:
+    """Construct a paired CSV file from sorted AIRR data
+
+    Parameters
+    ----------
+    sorted_file : str
+        Path to an AIRR-formatted TSV file that has already been sortedby sequence ID.
+        Required.
+
+    csv_dir : str
+        Path to the output directory into which the paired CSV will be written. Required.
+
+    id_pos : int, optional
+        Position of the column containing the sequence ID. Zero-indexed. Default is ``0``.
+
+    seq_pos : int, optional
+        Position of the column containing the sequence. Zero-indexed. Default is ``3``.
+
+    locus_pos : int, optional
+        Position of the column containing the locus. Zero-indexed. Default is ``61``.
+
+    shuffle : bool, optional
+        Shuffle the order of sequences in the paired CSV file. This is typically desirable
+        because sequence IDs are sorted as part of the pairing process. Default is ``True``.
+
+    delim : str, optional
+        Character at which to truncate sequence IDs to obtain the paired sequence name.
+        Default is ``"_"``, which is consistent with the naming practices of `CellRanger`_.
+
+    delim_occurence : int, optional
+        Occurance of `id_delim` at which to truncate sequence IDs to obtain the paired sequence
+        name. Default is ``1``, which is consistent with the naming practices of `CellRanger`_.
+
+    debug : bool, optional
+        If ``True``, output is much more verbose and more intermediate data files are retained.
+        Default is ``False``.
+
+
+    Returns
+    -------
+    paired_csv : str
+        Path to the newly created paired CSV file.
+
+
+    .. _CellRanger
+        https://support.10xgenomics.com/single-cell-vdj/software/pipelines/latest/what-is-cell-ranger
+
+    """
     csv_file = os.path.join(csv_dir, os.path.basename(sorted_file))
     params = {
         "id_pos": id_pos,
@@ -272,7 +319,7 @@ def make_paired_csv(
             for line in f:
                 if not line.strip:
                     continue
-                curr = CSVLine(line, **params)
+                curr = AIRRLine(line, **params)
                 if prev is None:
                     pair = [curr]
                     prev = curr
@@ -298,6 +345,27 @@ def make_paired_csv(
 
 
 def cluster_paired_csv(paired_csv: str, cluster_dir: str, threshold: float) -> str:
+    """
+    Clusters sequences using ``mmseqs2``.
+
+    Parameters
+    ----------
+    paired_csv : str
+        Path to a paired CSV file (generated with ``make_paired_csv()``). Required.
+
+    cluster_dir : str
+        Path to a directory into which clustered data will be written. Required.
+
+    threshold : float
+        Identity threshold for clustering, as a ``float`` between 0-1. ``0.99`` would
+        correspond to 99% identity. Required.
+
+
+    Returns
+    -------
+    clustered_csv : str
+        Path to the clustered CSV file.
+    """
     # make FASTA-formatted input for clustering
     bname = os.path.basename(paired_csv).replace(".csv", "")
     fasta_file = os.path.join(cluster_dir, f"{bname}.fasta")
@@ -332,7 +400,32 @@ def build_roberta_txt(
     output_dir: str,
     sep_token: str = "</s>",
     missing_chain_token: str = "<unk>",
-):
+) -> str:
+    """
+    Creates a RoBERTa-formatted text file from a paired CSV.
+
+    Parameters
+    ----------
+    paired_csv : str
+        Path to a paired CSV file, (generated with ``make_paired_csv()``). Required.
+
+    output_dir : str
+        Path to the output directory into which RoBERTa-formatted text file will be
+        written. Required.
+
+    sep_token : str, optional
+        Token used to separate heavy and light chains. Default is ``"</s>"``.
+
+    missing_chain_token : str, optional
+        Token used to indicated a missing paired heavy or light chain. Default
+        is ``"<unk>"``.
+
+
+    Returns
+    -------
+    roberta_csv : str
+        Path to the RoBERTa-formatted text file.
+    """
     bname = os.path.basename(paired_csv).replace(".csv", "")
     roberta_file = os.path.join(output_dir, f"{bname}.txt")
     with open(roberta_file, "w") as roberta:
@@ -374,6 +467,30 @@ def get_column_positions(
     sequence_key: str = "sequence_aa",
     locus_key: str = "locus",
 ) -> List[int]:
+    """
+    Gets column positions from an AIRR-formatted TSV file.
+
+    Parameters
+    ----------
+    airr_file : str
+        Path to the AIRR-formatted TSV file. Required.
+
+    id_key : str, optional
+        Name of the field containing the sequence ID. Default is ``"sequence_id"``.
+
+    sequence_key : str, optional
+        Name of the field containing the amino acid sequence. Default is ``"sequence_aa"``.
+
+    locus_key : str, optional
+        Name of the field containing the locus. Default is ``"locus"``.
+
+
+    Returns
+    -------
+    List[int]
+        Positions for `id_key`, `sequence_key` and `locus_key`.
+
+    """
     head_cmd = f"head -n 1 {airr_file}"
     p = sp.Popen(head_cmd, stdout=sp.PIPE, shell=True)
     stdout = p.communicate()
@@ -384,21 +501,7 @@ def get_column_positions(
     return {"id_pos": id_pos, "seq_pos": seq_pos, "locus_pos": locus_pos}
 
 
-def build_csv_line(lines) -> str:
-    line_data = [lines[0].name]
-    for locus in ["IGH", "IGK", "IGL"]:
-        seqs = [l for l in lines if l.locus == locus]
-        if seqs:
-            seq = seqs[0]
-            line_data.append(seq.id)
-            line_data.append(seq.seq)
-        else:
-            line_data.append("")
-            line_data.append("")
-    return ",".join(line_data)
-
-
-class CSVLine:
+class AIRRLine:
     def __init__(
         self,
         line: str,
@@ -433,3 +536,31 @@ class CSVLine:
     @property
     def locus(self) -> str:
         return self.line[self.locus_pos]
+
+
+def build_csv_line(lines) -> str:
+    """
+    Constructs a single paired CSV line from one or more ``AIRRLine`` objects.
+
+    Parameters
+    ----------
+    lines : _type_
+        List of ``AIRRLine`` objects.
+
+
+    Returns
+    -------
+    csv_line : str
+        The paired CSV line, as a string.
+    """
+    line_data = [lines[0].name]
+    for locus in ["IGH", "IGK", "IGL"]:
+        seqs = [l for l in lines if l.locus == locus]
+        if seqs:
+            seq = seqs[0]
+            line_data.append(seq.id)
+            line_data.append(seq.seq)
+        else:
+            line_data.append("")
+            line_data.append("")
+    return ",".join(line_data)
