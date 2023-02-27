@@ -24,7 +24,6 @@
 
 import os
 import subprocess as sp
-import tempfile
 from typing import Optional, List
 
 import abutils
@@ -33,14 +32,15 @@ import abutils
 def transform_airr(
     airr_data: str,
     output_dir: str,
-    temp_dir: Optional[str] = None,
     sep_token: str = "</s>",
     missing_chain_token: str = "<unk>",
+    concatenate: bool = True,
     id_key: str = "sequence_id",
     sequence_key: str = "sequence_aa",
     locus_key: str = "locus",
     id_delim: str = "_",
     id_delim_occurence: int = 1,
+    clustering_threshold: Optional[float] = None,
     shuffle_csv: bool = True,
     keep_paired_csv: bool = True,
     keep_sorted_airr: bool = False,
@@ -52,10 +52,15 @@ def transform_airr(
     # set up directories
     if temp_dir is None:
         temp_dir = output_dir
-    sort_dir = os.path.join(temp_dir, "sorted")
-    csv_dir = os.path.join(temp_dir, "csv")
+    sort_dir = os.path.join(output_dir, "sorted")
+    csv_dir = os.path.join(output_dir, "csv")
+    roberta_dir = os.path.join(output_dir, "txt")
     abutils.io.makedir(sort_dir)
     abutils.io.makedir(csv_dir)
+    abutils.io.makedir(roberta_dir)
+    if clustering_threshold is not None:
+        cluster_dir = os.path.join(output_dir, "clustered_csv")
+        abutils.io.makedir(cluster_dir)
 
     for airr_file in airr_data:
         positions = get_column_positions(airr_file, id_key, sequence_key, locus_key)
@@ -74,9 +79,15 @@ def transform_airr(
             debug=debug,
             **positions,
         )
+        if clustering_threshold is not None:
+            paired_csv = cluster_paired_csv(
+                paired_csv=paired_csv,
+                cluster_dir=cluster_dir,
+                threshold=clustering_threshold,
+            )
         roberta_txt = build_roberta_txt(
             paired_csv=paired_csv,
-            output_dir=output_dir,
+            output_dir=roberta_dir,
             sep_token=sep_token,
             missing_chain_token=missing_chain_token,
         )
@@ -84,6 +95,9 @@ def transform_airr(
             os.remove(sorted_file)
         if not keep_paired_csv:
             os.remove(paired_csv)
+    if concatenate:
+        concat_file = os.path.join(output_dir, "output.txt")
+        concatenate_roberta_txt(roberta_dir=roberta_dir, concat_file=concat_file)
 
 
 def sort_airr_file(
@@ -151,6 +165,36 @@ def make_paired_csv(
     return csv_file
 
 
+def cluster_paired_csv(paired_csv: str, cluster_dir: str, threshold: float) -> str:
+    # make FASTA-formatted input for clustering
+    bname = os.path.basename(paired_csv).replace(".csv", "")
+    fasta_file = os.path.join(cluster_dir, f"{bname}.fasta")
+    clustered_csv = os.path.join(cluster_dir, f"{bname}.csv")
+    with open(fasta_file, "w") as fasta:
+        with open(paired_csv, "r") as csv:
+            for line in csv:
+                if not (line := line.strip().split(",")):
+                    continue
+                name, h, k, l = line[::2]
+                fasta.write(f">{name}\n{h}{k}{l}\n")
+    # do clustering
+    cluster_dict = abutils.tl.cluster_mmseqs(
+        fasta_file=fasta_file, threshold=threshold, as_dict=True
+    )
+    centroid_ids = set([c["centroid_id"] for c in cluster_dict.values()])
+    # build a new CSV file containing only cluster centroids
+    with open(clustered_csv, "w") as clust:
+        with open(paired_csv, "r") as csv:
+            for line in csv:
+                if line.strip():
+                    name = line.strip().split(",")[0]
+                    if name in centroid_ids:
+                        clust.write(line)
+    # remove the FASTA file used for clustering
+    os.remove(fasta_file)
+    return clustered_csv
+
+
 def build_roberta_txt(
     paired_csv: str,
     output_dir: str,
@@ -180,6 +224,16 @@ def build_roberta_txt(
                         light = igl_seq
                 roberta.write(f"{heavy}{sep_token}{light}\n")
     return roberta_file
+
+
+def concatenate_roberta_txt(roberta_dir: str, concat_file: str, debug: bool = False):
+    roberta_files = abutils.io.list_files(roberta_dir)
+    concat_cmd = f"cat {' '.join(roberta_files)} > {concat_file}"
+    p = sp.Popen(concat_cmd, stdout=sp.PIPE, stderr=sp.PIPE, shell=True)
+    stdout, stderr = p.communicate()
+    if debug:
+        print(stdout)
+        print(stderr)
 
 
 def get_column_positions(
