@@ -1,0 +1,6 @@
+include README.md
+include requirements*
+include data_processing/*
+include model/*
+include training/*
+
