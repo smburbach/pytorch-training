@@ -39,7 +39,7 @@ def transform_airr(
     sequence_key: str = "sequence_aa",
     locus_key: str = "locus",
     id_delim: str = "_",
-    id_delim_occurence: int = 1,
+    id_delim_occurrence: int = 1,
     clustering_threshold: Optional[float] = None,
     shuffle_csv: bool = True,
     keep_paired_csv: bool = True,
@@ -95,8 +95,8 @@ def transform_airr(
         the paired sequence name. Default is ``"_"``, which is consistent with the
         naming practices of `CellRanger`_.
 
-    id_delim_occurence : int, optional
-        For paired sequences, occurance of `id_delim` at which to truncate sequence IDs to
+    id_delim_occurrence : int, optional
+        For paired sequences, occurrence of `id_delim` at which to truncate sequence IDs to
         obtain the paired sequence name. Default is ``1``, which is consistent with the
         naming practices of `CellRanger`_.
 
@@ -140,7 +140,7 @@ def transform_airr(
     elif os.path.isdir(airr_data):
         airr_data = {"": abutils.io.list_files(airr_data)}
     else:
-        _airr_data = []
+        _airr_data = {}
         for a in airr_data:
             if os.path.isfile(a):
                 if "" not in _airr_data:
@@ -156,12 +156,12 @@ def transform_airr(
     base_sort_dir = os.path.join(output_dir, "sorted")
     base_csv_dir = os.path.join(output_dir, "csv")
     base_roberta_dir = os.path.join(output_dir, "txt")
-    abutils.io.makedir(base_sort_dir)
-    abutils.io.makedir(base_csv_dir)
-    abutils.io.makedir(base_roberta_dir)
+    abutils.io.make_dir(base_sort_dir)
+    abutils.io.make_dir(base_csv_dir)
+    abutils.io.make_dir(base_roberta_dir)
     if clustering_threshold is not None:
         base_cluster_dir = os.path.join(output_dir, "clustered_csv")
-        abutils.io.makedir(base_cluster_dir)
+        abutils.io.make_dir(base_cluster_dir)
     # process AIRR batches
     for batch_name, airr_batch in airr_data.items():
         airr_batch = list(set(airr_batch))
@@ -180,7 +180,7 @@ def transform_airr(
                 if batch_name
                 else base_cluster_dir
             )
-        for airr_file in airr_data:
+        for airr_file in airr_batch:
             positions = get_column_positions(airr_file, id_key, sequence_key, locus_key)
             to_remove = []
             # sort the input AIRR file
@@ -197,7 +197,7 @@ def transform_airr(
                 sorted_file,
                 csv_dir=csv_dir,
                 delim=id_delim,
-                delim_occurence=id_delim_occurence,
+                delim_occurrence=id_delim_occurrence,
                 shuffle=shuffle_csv,
                 debug=debug,
                 **positions,
@@ -235,8 +235,8 @@ def transform_airr(
 def sort_airr_file(
     airr_file: str, sort_dir: str, id_pos: int = 0, debug: bool = False
 ) -> str:
-    bname = os.path.basename(airr_file).replace(".tsv", "")
-    sorted_file = os.path.join(sort_dir, f"{bname}.csv")
+    bname = os.path.basename(airr_file)
+    sorted_file = os.path.join(sort_dir, bname)
     sort_cmd = f"tail -n +2 {airr_file} | "
     sort_cmd += f'sort -t"\t" -k {id_pos + 1},{id_pos + 1} >> {sorted_file}'
     p = sp.Popen(sort_cmd, stdout=sp.PIPE, stderr=sp.PIPE, shell=True)
@@ -255,7 +255,7 @@ def make_paired_csv(
     locus_pos: int = 61,
     shuffle: bool = True,
     delim: str = "_",
-    delim_occurence: int = 1,
+    delim_occurrence: int = 1,
     debug: bool = False,
 ) -> str:
     """Construct a paired CSV file from sorted AIRR data
@@ -286,8 +286,8 @@ def make_paired_csv(
         Character at which to truncate sequence IDs to obtain the paired sequence name.
         Default is ``"_"``, which is consistent with the naming practices of `CellRanger`_.
 
-    delim_occurence : int, optional
-        Occurance of `id_delim` at which to truncate sequence IDs to obtain the paired sequence
+    delim_occurrence : int, optional
+        occurrence of `id_delim` at which to truncate sequence IDs to obtain the paired sequence
         name. Default is ``1``, which is consistent with the naming practices of `CellRanger`_.
 
     debug : bool, optional
@@ -305,25 +305,32 @@ def make_paired_csv(
         https://support.10xgenomics.com/single-cell-vdj/software/pipelines/latest/what-is-cell-ranger
 
     """
-    csv_file = os.path.join(csv_dir, os.path.basename(sorted_file))
+    bname = os.path.basename(sorted_file).replace(".tsv", "")
+    csv_file = os.path.join(csv_dir, f"{bname}.csv")
     params = {
         "id_pos": id_pos,
         "seq_pos": seq_pos,
         "locus_pos": locus_pos,
         "delim": delim,
-        "delim_occurance": delim_occurence,
+        "delim_occurrence": delim_occurrence,
     }
     prev = None
+    pair = []
     with open(csv_file, "w") as csv:
         with open(sorted_file, "r") as f:
             for line in f:
-                if not line.strip:
+                if not line.strip():
                     continue
                 curr = AIRRLine(line, **params)
                 if prev is None:
-                    pair = [curr]
+                    pair.append(curr)
                     prev = curr
-                elif curr.name == prev.name:
+                    continue
+                if curr.name == prev.name:
+                    # print(f"{curr.name} == {prev.name}")
+                    # print(prev.raw_line)
+                    # break
+
                     pair.append(curr)
                     prev = curr
                 else:
@@ -493,7 +500,7 @@ def get_column_positions(
     """
     head_cmd = f"head -n 1 {airr_file}"
     p = sp.Popen(head_cmd, stdout=sp.PIPE, shell=True)
-    stdout = p.communicate()
+    stdout, _ = p.communicate()
     header = stdout.decode("utf-8").strip().split("\t")
     id_pos = header.index(id_key)
     seq_pos = header.index(sequence_key)
@@ -525,9 +532,7 @@ class AIRRLine:
 
     @property
     def name(self) -> str:
-        return self.delim.join(self.line)[self.id_pos].split(self.delim)[
-            : self.delim_occurrence
-        ]
+        return self.delim.join(self.id.split(self.delim)[: self.delim_occurrence])
 
     @property
     def seq(self) -> str:
@@ -558,9 +563,7 @@ def build_csv_line(lines) -> str:
         seqs = [l for l in lines if l.locus == locus]
         if seqs:
             seq = seqs[0]
-            line_data.append(seq.id)
-            line_data.append(seq.seq)
+            line_data.extend([seq.id, seq.seq])
         else:
-            line_data.append("")
-            line_data.append("")
+            line_data.extend(["", ""])
     return ",".join(line_data)
