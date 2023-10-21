@@ -25,6 +25,7 @@
 import os
 import subprocess as sp
 from typing import Optional, List, Union, Iterable
+import uuid
 
 import abutils
 
@@ -39,7 +40,7 @@ def transform_airr(
     sequence_key: str = "sequence_aa",
     locus_key: str = "locus",
     id_delim: str = "_",
-    id_delim_occurence: int = 1,
+    id_delim_occurrence: int = 1,
     clustering_threshold: Optional[float] = None,
     shuffle_csv: bool = True,
     keep_paired_csv: bool = True,
@@ -95,8 +96,8 @@ def transform_airr(
         the paired sequence name. Default is ``"_"``, which is consistent with the
         naming practices of `CellRanger`_.
 
-    id_delim_occurence : int, optional
-        For paired sequences, occurance of `id_delim` at which to truncate sequence IDs to
+    id_delim_occurrence : int, optional
+        For paired sequences, occurrence of `id_delim` at which to truncate sequence IDs to
         obtain the paired sequence name. Default is ``1``, which is consistent with the
         naming practices of `CellRanger`_.
 
@@ -140,7 +141,7 @@ def transform_airr(
     elif os.path.isdir(airr_data):
         airr_data = {"": abutils.io.list_files(airr_data)}
     else:
-        _airr_data = []
+        _airr_data = {}
         for a in airr_data:
             if os.path.isfile(a):
                 if "" not in _airr_data:
@@ -156,12 +157,12 @@ def transform_airr(
     base_sort_dir = os.path.join(output_dir, "sorted")
     base_csv_dir = os.path.join(output_dir, "csv")
     base_roberta_dir = os.path.join(output_dir, "txt")
-    abutils.io.makedir(base_sort_dir)
-    abutils.io.makedir(base_csv_dir)
-    abutils.io.makedir(base_roberta_dir)
+    abutils.io.make_dir(base_sort_dir)
+    abutils.io.make_dir(base_csv_dir)
+    abutils.io.make_dir(base_roberta_dir)
     if clustering_threshold is not None:
         base_cluster_dir = os.path.join(output_dir, "clustered_csv")
-        abutils.io.makedir(base_cluster_dir)
+        abutils.io.make_dir(base_cluster_dir)
     # process AIRR batches
     for batch_name, airr_batch in airr_data.items():
         airr_batch = list(set(airr_batch))
@@ -180,9 +181,11 @@ def transform_airr(
                 if batch_name
                 else base_cluster_dir
             )
-        for airr_file in airr_data:
+        sorted_airrs = []
+        paired_csvs = []
+        roberta_txts = []
+        for airr_file in airr_batch:
             positions = get_column_positions(airr_file, id_key, sequence_key, locus_key)
-            to_remove = []
             # sort the input AIRR file
             sorted_file = sort_airr_file(
                 airr_file=airr_file,
@@ -190,29 +193,29 @@ def transform_airr(
                 id_pos=positions["id_pos"],
                 debug=debug,
             )
-            if not keep_sorted_airr:
-                to_remove.append(sorted_file)
+            sorted_airrs.append(sorted_file)
             # build a paired CSV
             paired_csv = make_paired_csv(
                 sorted_file,
                 csv_dir=csv_dir,
                 delim=id_delim,
-                delim_occurence=id_delim_occurence,
+                delim_occurrence=id_delim_occurrence,
                 shuffle=shuffle_csv,
                 debug=debug,
                 **positions,
             )
-            if not keep_paired_csv:
-                to_remove.append(paired_csv)
-            # cluster paired sequences
-            if clustering_threshold is not None:
-                paired_csv = cluster_paired_csv(
-                    paired_csv=paired_csv,
-                    cluster_dir=cluster_dir,
-                    threshold=clustering_threshold,
-                )
-                if not keep_paired_csv:
-                    to_remove.append(paired_csv)
+            paired_csvs.append(paired_csv)
+
+            # # cluster paired sequences
+            # if clustering_threshold is not None:
+            #     paired_csv = cluster_paired_csv(
+            #         paired_csv=paired_csv,
+            #         cluster_dir=cluster_dir,
+            #         threshold=clustering_threshold,
+            #     )
+            #     if not keep_paired_csv:
+            #         to_remove.append(paired_csv)
+
             # build the RoBERTa text output
             roberta_txt = build_roberta_txt(
                 paired_csv=paired_csv,
@@ -220,14 +223,18 @@ def transform_airr(
                 sep_token=sep_token,
                 missing_chain_token=missing_chain_token,
             )
-            # clean up
-            for r in to_remove:
-                os.remove(r)
-        if concatenate:
-            if batch_name:
-                concat_file = os.path.join(output_dir, f"{batch_name}.txt")
-            else:
-                concat_file = os.path.join(output_dir, "output.txt")
+            roberta_txts.append(roberta_txt)
+            # # clean up
+            # for r in to_remove:
+            #     os.remove(r)
+    if concatenate:
+        concat_roberta = os.path.join(output_dir, "output.txt")
+        if clustering_threshold is not None:
+            concat_paired_csv = os.path.join(output_dir, "paired.csv")
+            concatenate_files(paired_csvs, concat_paired_csv)
+            concat_clustered_csv = os.path.join(output_dir, f"clustered_pairs.csv")
+
+        else:
             concatenate_roberta_txt(roberta_dir=roberta_dir, concat_file=concat_file)
     return output_dir
 
@@ -235,8 +242,8 @@ def transform_airr(
 def sort_airr_file(
     airr_file: str, sort_dir: str, id_pos: int = 0, debug: bool = False
 ) -> str:
-    bname = os.path.basename(airr_file).replace(".tsv", "")
-    sorted_file = os.path.join(sort_dir, f"{bname}.csv")
+    bname = os.path.basename(airr_file)
+    sorted_file = os.path.join(sort_dir, bname)
     sort_cmd = f"tail -n +2 {airr_file} | "
     sort_cmd += f'sort -t"\t" -k {id_pos + 1},{id_pos + 1} >> {sorted_file}'
     p = sp.Popen(sort_cmd, stdout=sp.PIPE, stderr=sp.PIPE, shell=True)
@@ -255,7 +262,7 @@ def make_paired_csv(
     locus_pos: int = 61,
     shuffle: bool = True,
     delim: str = "_",
-    delim_occurence: int = 1,
+    delim_occurrence: int = 1,
     debug: bool = False,
 ) -> str:
     """Construct a paired CSV file from sorted AIRR data
@@ -286,8 +293,8 @@ def make_paired_csv(
         Character at which to truncate sequence IDs to obtain the paired sequence name.
         Default is ``"_"``, which is consistent with the naming practices of `CellRanger`_.
 
-    delim_occurence : int, optional
-        Occurance of `id_delim` at which to truncate sequence IDs to obtain the paired sequence
+    delim_occurrence : int, optional
+        occurrence of `id_delim` at which to truncate sequence IDs to obtain the paired sequence
         name. Default is ``1``, which is consistent with the naming practices of `CellRanger`_.
 
     debug : bool, optional
@@ -305,25 +312,28 @@ def make_paired_csv(
         https://support.10xgenomics.com/single-cell-vdj/software/pipelines/latest/what-is-cell-ranger
 
     """
-    csv_file = os.path.join(csv_dir, os.path.basename(sorted_file))
+    bname = os.path.basename(sorted_file).replace(".tsv", "")
+    csv_file = os.path.join(csv_dir, f"{bname}.csv")
     params = {
         "id_pos": id_pos,
         "seq_pos": seq_pos,
         "locus_pos": locus_pos,
         "delim": delim,
-        "delim_occurance": delim_occurence,
+        "delim_occurrence": delim_occurrence,
     }
     prev = None
+    pair = []
     with open(csv_file, "w") as csv:
         with open(sorted_file, "r") as f:
             for line in f:
-                if not line.strip:
+                if not line.strip():
                     continue
                 curr = AIRRLine(line, **params)
                 if prev is None:
-                    pair = [curr]
+                    pair.append(curr)
                     prev = curr
-                elif curr.name == prev.name:
+                    continue
+                if curr.name == prev.name:
                     pair.append(curr)
                     prev = curr
                 else:
@@ -344,14 +354,21 @@ def make_paired_csv(
     return csv_file
 
 
-def cluster_paired_csv(paired_csv: str, cluster_dir: str, threshold: float) -> str:
+def cluster_paired_csvs(
+    paired_csvs: Union[Iterable, str], clustered_csv_path: str, threshold: float
+) -> str:
     """
     Clusters sequences using ``mmseqs2``.
 
     Parameters
     ----------
-    paired_csv : str
-        Path to a paired CSV file (generated with ``make_paired_csv()``). Required.
+    paired_csvs : Iterable or str
+        Path to paired CSV data (generated with ``make_paired_csv()``).
+        Can be one of three things:
+            * path to an AIRR-formatted TSV file
+            * path to a directory containing one or more AIRR-formatted TSV files
+            * an iterable containing one or more of either of the above.
+        Required.
 
     cluster_dir : str
         Path to a directory into which clustered data will be written. Required.
@@ -366,17 +383,25 @@ def cluster_paired_csv(paired_csv: str, cluster_dir: str, threshold: float) -> s
     clustered_csv : str
         Path to the clustered CSV file.
     """
+    # process input
+    if isinstance(paired_csvs, str):
+        if os.path.isdir(paired_csvs):
+            paired_csvs = abutils.io.list_files(paired_csvs)
+        else:
+            paired_csvs = [paired_csvs]
     # make FASTA-formatted input for clustering
-    bname = os.path.basename(paired_csv).replace(".csv", "")
+    bname = os.path.basename(clustered_csv_path).replace(".csv", "")
     fasta_file = os.path.join(cluster_dir, f"{bname}.fasta")
     clustered_csv = os.path.join(cluster_dir, f"{bname}.csv")
     with open(fasta_file, "w") as fasta:
-        with open(paired_csv, "r") as csv:
-            for line in csv:
-                if not (line := line.strip().split(",")):
-                    continue
-                name, h, k, l = line[::2]
-                fasta.write(f">{name}\n{h}{k}{l}\n")
+        for paired_csv in paired_csvs:
+            with open(paired_csv, "r") as csv:
+                for line in csv:
+                    if not (line := line.strip().split(",")):
+                        continue
+                    unique_id = line[0]
+                    h, k, l = line[3::2]
+                    fasta.write(f">{unique_id}\n{h}{k}{l}\n")
     # do clustering
     cluster_dict = abutils.tl.cluster_mmseqs(
         fasta_file=fasta_file, threshold=threshold, as_dict=True
@@ -432,9 +457,9 @@ def build_roberta_txt(
         with open(paired_csv, "r") as csv:
             for line in csv:
                 if l := line.strip().split(","):
-                    igh_seq = l[2].strip()
-                    igk_seq = l[4].strip()
-                    igl_seq = l[6].strip()
+                    igh_seq = l[3].strip()
+                    igk_seq = l[5].strip()
+                    igl_seq = l[7].strip()
                     if not any([igh_seq, igk_seq, igl_seq]):
                         continue
                     if igh_seq:
@@ -451,14 +476,21 @@ def build_roberta_txt(
     return roberta_file
 
 
-def concatenate_roberta_txt(roberta_dir: str, concat_file: str, debug: bool = False):
-    roberta_files = abutils.io.list_files(roberta_dir)
-    concat_cmd = f"cat {' '.join(roberta_files)} > {concat_file}"
+def concatenate_files(
+    input_data: Union[Iterable, str], concat_file: str, debug: bool = False
+) -> str:
+    if isinstance(input_data, str):
+        if os.path.isdir(input_data):
+            input_data = abutils.io.list_files(input_data)
+        else:
+            input_data = [input_data]
+    concat_cmd = f"cat {' '.join(input_data)} > {concat_file}"
     p = sp.Popen(concat_cmd, stdout=sp.PIPE, stderr=sp.PIPE, shell=True)
     stdout, stderr = p.communicate()
     if debug:
         print(stdout)
         print(stderr)
+    return concat_file
 
 
 def get_column_positions(
@@ -493,7 +525,7 @@ def get_column_positions(
     """
     head_cmd = f"head -n 1 {airr_file}"
     p = sp.Popen(head_cmd, stdout=sp.PIPE, shell=True)
-    stdout = p.communicate()
+    stdout, _ = p.communicate()
     header = stdout.decode("utf-8").strip().split("\t")
     id_pos = header.index(id_key)
     seq_pos = header.index(sequence_key)
@@ -525,9 +557,7 @@ class AIRRLine:
 
     @property
     def name(self) -> str:
-        return self.delim.join(self.line)[self.id_pos].split(self.delim)[
-            : self.delim_occurrence
-        ]
+        return self.delim.join(self.id.split(self.delim)[: self.delim_occurrence])
 
     @property
     def seq(self) -> str:
@@ -541,6 +571,12 @@ class AIRRLine:
 def build_csv_line(lines) -> str:
     """
     Constructs a single paired CSV line from one or more ``AIRRLine`` objects.
+    CSV file is of the format::
+
+        uuid, pair_name, IGH_id, IGH_seq, IGK_id, IGK_seq, IGL_id, IGL_seq
+
+    If any of the sequences (IGH, IGK or IGL) are missing, the respective seqeunce
+    and ID fields will be population with an empty string (``""``).
 
     Parameters
     ----------
@@ -553,14 +589,12 @@ def build_csv_line(lines) -> str:
     csv_line : str
         The paired CSV line, as a string.
     """
-    line_data = [lines[0].name]
+    line_data = [uuid.uuid4(), lines[0].name]
     for locus in ["IGH", "IGK", "IGL"]:
         seqs = [l for l in lines if l.locus == locus]
         if seqs:
             seq = seqs[0]
-            line_data.append(seq.id)
-            line_data.append(seq.seq)
+            line_data.extend([seq.id, seq.seq])
         else:
-            line_data.append("")
-            line_data.append("")
+            line_data.extend(["", ""])
     return ",".join(line_data)
