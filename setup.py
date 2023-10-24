@@ -15,7 +15,7 @@ with open("README.md", encoding="utf-8") as f:
     long_description = f.read()
 
 setup(
-    name="balm",
+    name="balm-antibody",
     version=__version__,
     author="Bryan Briney",
     author_email="briney@scripps.edu",
