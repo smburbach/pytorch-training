@@ -22,5 +22,5 @@
 #
 
 
-from .model.balm import get_model as BALM
-from .model.tokenizer import BALM_tokenizer
+from .models.balm import get_model as BALM
+from .models.tokenizer import BALM_tokenizer
