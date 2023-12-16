@@ -22,15 +22,13 @@
 #
 
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from .config import BALMMoEConfig
-from .loss import router_z_loss, load_balancing_loss_func
-
 
 
 class TransformerLayer(nn.Module):
@@ -73,14 +71,26 @@ class TransformerLayer(nn.Module):
         self.norm1 = nn.LayerNorm(self.embed_dim)
         self.norm2 = nn.LayerNorm(self.embed_dim)
 
-
     def forward(
-        self, x, attn_mask=None, key_padding_mask=None, need_weights=True
+        self,
+        x: torch.Tensor,
+        attn_mask: Optional[torch.Tensor] = None,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        need_weights: bool = False,
     ):
+        """
+
+        NOTE: if `need_weights` is True, the output will be a tuple of ``(x, attn)``. Also,
+        nn.MultiHeadAttention will not be able to use the optimized torch implementation
+        of ``scaled_dot_product_attention``. See `here`_ for more details.
+
+        .. _here:
+            https://pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html#torch.nn.MultiheadAttention.forward
+        """
         # attention
         residual = x
         x = self.norm1(x)
-        x, attn = self.self_attn(
+        x = self.self_attn(
             query=x,
             key=x,
             value=x,
@@ -88,6 +98,8 @@ class TransformerLayer(nn.Module):
             need_weights=need_weights,
             attn_mask=attn_mask,
         )
+        if need_weights:
+            x, attn = x
         x = residual + x
 
         # feedforward
@@ -97,36 +109,52 @@ class TransformerLayer(nn.Module):
         x = self.ff_dropout(x)
         x = residual + x
 
-        return x, attn
-
-
-
+        if need_weights:
+            return x, attn
+        return x
 
 
 # ---------------------------
-#     SWITCH TRANSFORMERS
+#        BALM MoE
 # ---------------------------
 
-class Top1Router(nn.Module):
+
+class Router(nn.Module):
     """
     Router that allows tokens to choose their own top-1 experts assignment.
 
     This router uses the same mechanism as in Switch Transformer (https://arxiv.org/abs/2101.03961) and V-MoE
     (https://arxiv.org/abs/2106.05974): tokens choose their top experts. Items are sorted by router_probs and then
-    routed to their expert of choice until the expert's `expert_capacity` is reached. **There is no guarantee that 
+    routed to their expert of choice until the expert's `expert_capacity` is reached. **There is no guarantee that
     each token is processed by an expert**, or that each expert receives at least one token.
     """
 
-    def __init__(self, config: BALMMoEConfig):
+    def __init__(
+        self,
+        embed_dim: int,
+        num_experts: int,
+        expert_capacity: int,
+        dtype: str,
+        bias: bool,
+        jitter: float,
+        ignore_padding_tokens: bool,
+    ):
         super().__init__()
-        self.num_experts = config.num_experts
-        self.expert_capacity = config.expert_capacity
-        self.dtype = getattr(torch, config.router_dtype)
-        self.classifier = nn.Linear(config.hidden_size, self.num_experts, bias=config.router_bias, dtype=self.dtype)
-        self.jitter = config.router_jitter_noise
-        self.ignore_padding_tokens = config.router_ignore_padding_tokens
+        self.num_experts = num_experts
+        self.expert_capacity = expert_capacity
+        self.dtype = getattr(torch, dtype)
+        self.classifier = nn.Linear(
+            embed_dim,
+            self.num_experts,
+            bias=bias,
+            dtype=self.dtype,
+        )
+        self.jitter = jitter
+        self.ignore_padding_tokens = ignore_padding_tokens
 
-    def _compute_router_probabilities(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _compute_router_probabilities(
+        self, x: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         r"""
         Computes router probabilities from input hidden states.
 
@@ -156,8 +184,10 @@ class Top1Router(nn.Module):
         probabilities = F.softmax(logits, dim=-1, dtype=self.dtype).to(self.input_dtype)
         return probabilities, logits
 
-    def forward(self, x: torch.Tensor) -> Tuple:
-        r"""
+    def forward(
+        self, x: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
         Generic forward function for every Router class. Each Router expects to have the same input hidden states
         (`x`) corresponding to the hidden states for each token, the `expert_capacity` corresponding to the
         number of tokens the Router can send to each expert.
@@ -187,51 +217,74 @@ class Top1Router(nn.Module):
         return expert_indices, router_probs, router_logits
 
 
-
 # This is from the huggingface implementation of Switch Transformers
 # https://github.com/huggingface/transformers/blob/c48787f347bd604f656c2cfff730e029c8f8c1fe/src/transformers/models/switch_transformers/modeling_switch_transformers.py#L223
 # Not sure if it's needed -- the main difference between this and nn.LayerNorm is that this one
 # doesn't subtract the mean from the input (and doesn't have bias, but we can do that in nn.LayerNorm)
 
 # Copied from transformers.models.t5.modeling_t5.T5LayerNorm with T5->SwitchTransformers
-class SwitchTransformersLayerNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6):
-        """
-        Construct a layernorm module in the SwitchTransformers style. No bias and no subtraction of mean.
-        """
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.variance_epsilon = eps
 
-    def forward(self, hidden_states):
-        # SwitchTransformers uses a layer_norm which only scales and doesn't shift, which is also known as Root Mean
-        # Square Layer Normalization https://arxiv.org/abs/1910.07467 thus varience is calculated
-        # w/o mean and there is no bias. Additionally we want to make sure that the accumulation for
-        # half-precision inputs is done in fp32
+# class SwitchTransformersLayerNorm(nn.Module):
+#     def __init__(self, hidden_size, eps=1e-6):
+#         """
+#         Construct a layernorm module in the SwitchTransformers style. No bias and no subtraction of mean.
+#         """
+#         super().__init__()
+#         self.weight = nn.Parameter(torch.ones(hidden_size))
+#         self.variance_epsilon = eps
 
-        variance = hidden_states.to(torch.float32).pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+#     def forward(self, hidden_states):
+#         # SwitchTransformers uses a layer_norm which only scales and doesn't shift, which is also known as Root Mean
+#         # Square Layer Normalization https://arxiv.org/abs/1910.07467 thus varience is calculated
+#         # w/o mean and there is no bias. Additionally we want to make sure that the accumulation for
+#         # half-precision inputs is done in fp32
 
-        # convert into half-precision if necessary
-        if self.weight.dtype in [torch.float16, torch.bfloat16]:
-            hidden_states = hidden_states.to(self.weight.dtype)
+#         variance = hidden_states.to(torch.float32).pow(2).mean(-1, keepdim=True)
+#         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
 
-        return self.weight * hidden_states
+#         # convert into half-precision if necessary
+#         if self.weight.dtype in [torch.float16, torch.bfloat16]:
+#             hidden_states = hidden_states.to(self.weight.dtype)
 
+#         return self.weight * hidden_states
 
 
 # Copied from transformers.models.t5.modeling_t5.T5DenseActDense with T5->SwitchTransformers
 class Expert(nn.Module):
-    def __init__(self, config: BALMMoEConfig):
+    """
+
+
+    Parameters:
+    -----------
+    embed_dim : int
+        [description]
+
+    ffn_embed_dim : int
+        [description]
+
+    dropout_rate : float
+        [description]
+
+    activation : str, optional
+        Activation function to use. One of "relu" or "gelu". The default is "gelu".
+    """
+
+    def __init__(
+        self,
+        embed_dim: int,
+        ffn_embed_dim: int,
+        dropout_rate: float,
+        activation: str = "gelu",
+    ):
         super().__init__()
-        self.wi = nn.Linear(config.d_model, config.d_ff, bias=False)
-        self.wo = nn.Linear(config.d_ff, config.d_model, bias=False)
-        self.dropout = nn.Dropout(config.hidden_dropout_rate)
+        self.wi = nn.Linear(embed_dim, ffn_embed_dim, bias=False)
+        self.wo = nn.Linear(ffn_embed_dim, embed_dim, bias=False)
+        self.dropout = nn.Dropout(dropout_rate)
         # in the huggingface implementation, relu is used by default as the activation function
         # self.activation = ACT2FN[config.dense_act_fn]
-        self.activation = nn.GELU()
+        self.activation = nn.GELU() if activation.lower() == "gelu" else nn.ReLU()
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.wi(x)
         x = self.activation(x)
         x = self.dropout(x)
@@ -247,21 +300,39 @@ class Expert(nn.Module):
 
 
 class SparseMLP(nn.Module):
-    r"""
+    """
     Implementation of the Switch Transformers Sparse MLP module.
     """
 
-    def __init__(self, config: BALMMoEConfig, expert_class: nn.Module = Expert):
+    def __init__(
+        self,
+        config: BALMMoEConfig,
+        router_class: nn.Module = Router,
+        expert_class: nn.Module = Expert,
+    ):
         super().__init__()
         # Step 1: Get the correct router according to its class
-        self.router = Top1Router(config)
+        self.router = router_class(
+            embed_dim=config.embed_dim,
+            num_experts=config.num_experts,
+            expert_capacity=config.expert_capacity,
+            dtype=config.router_dtype,
+            bias=config.router_bias,
+            jitter=config.router_jitter,
+            ignore_padding_tokens=config.router_ignore_padding_tokens,
+        )
 
         # Step 2: Get the experts
         self.experts = nn.ModuleDict()
         for idx in range(config.num_experts):
-            self.experts[f"expert_{idx}"] = expert_class(config)
+            self.experts[f"expert_{idx}"] = expert_class(
+                embed_dim=config.embed_dim,
+                ffn_embed_dim=config.ffn_embed_dim,
+                dropout_rate=config.hidden_dropout_rate,
+                activation=config.expert_activation,
+            )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, Tuple]:
         r"""
         Hold on, this will be slightly tricky to understand In the correct order, a MoE layer does the following:
 
@@ -280,7 +351,7 @@ class SparseMLP(nn.Module):
 
         # The routers introduced might not always map all the tokens to a router, since
         # the desired expert might be above capacity. The hidden states of those tokens
-        # will be unchanged from one layer to another. That is why the hidden states are 
+        # will be unchanged from one layer to another. That is why the hidden states are
         # cloned before updating only the tokens that have been successfully routed to an expert.
         next_states = x.clone()
         for idx, expert in enumerate(self.experts.values()):
@@ -309,7 +380,9 @@ class FFLayerMoE(nn.Module):
         self.layer_norm = nn.LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
 
-    def forward(self, x, output_router_logits):
+    def forward(
+        self, x: torch.Tensor, output_router_logits: bool = True
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Tuple]]:
         residual = x
         x, router_tuple = self.mlp(x)
         x = self.dropout(x)
@@ -319,21 +392,8 @@ class FFLayerMoE(nn.Module):
         return x
 
 
-
-        forwarded_states = self.layer_norm(hidden_states)
-        forwarded_states = self.mlp(forwarded_states)
-        forwarded_states, router_tuple = forwarded_states
-        output = hidden_states + self.dropout(forwarded_states)
-        if output_router_logits and router_tuple is not None:
-            output = (output, router_tuple)
-        return output
-
-
-
-
-
-class TransformerLayerMoE(nn.Module):
-    """Transformer layer block, with Mixture of Experts."""
+class MoETransformerLayer(nn.Module):
+    """Transformer layer with Mixture of Experts."""
 
     def __init__(
         self,
@@ -366,18 +426,26 @@ class TransformerLayerMoE(nn.Module):
         self.norm1 = nn.LayerNorm(self.embed_dim, eps=self.layer_norm_eps)
         self.norm2 = nn.LayerNorm(self.embed_dim, eps=self.layer_norm_eps)
 
-
     def forward(
-        self, 
-        x: torch.Tensor, 
-        attn_mask: Optional[torch.Tensor] = None, 
-        key_padding_mask: Optional[torch.Tensor] = None, 
-        need_weights: bool = True, 
+        self,
+        x: torch.Tensor,
+        attn_mask: Optional[torch.Tensor] = None,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        need_weights: bool = False,
         output_router_logits: bool = True,
-    ):
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Tuple]]:
+        """
+
+        NOTE: if `need_weights` is True, the output will be a tuple of ``(x, attn)``. Also,
+        nn.MultiHeadAttention will not be able to use the optimized torch implementation
+        of ``scaled_dot_product_attention``. See `here`_ for more details.
+
+        .. _here:
+            https://pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html#torch.nn.MultiheadAttention.forward
+        """
         # attention
         residual = x
-        x, attn = self.self_attn(
+        x = self.self_attn(
             query=x,
             key=x,
             value=x,
@@ -385,6 +453,8 @@ class TransformerLayerMoE(nn.Module):
             need_weights=need_weights,
             attn_mask=attn_mask,
         )
+        if need_weights:
+            x, attn = x
         x = residual + x
         x = self.norm1(x)
 
@@ -398,151 +468,12 @@ class TransformerLayerMoE(nn.Module):
         return x
 
 
-        # feedforward
-        residual = x
-        x = self.norm2(x)
-        x = self.ff_linear_2(self.ff_activation(self.ff_linear_1(x)))
-        x = self.ff_dropout(x)
-        x = residual + x
-
-        return x, attn
-
-
-
-
-
-class SwitchTransformersBlock(nn.Module):
-    def __init__(self, config, has_relative_attention_bias=False, is_sparse=False):
-        super().__init__()
-        self.is_decoder = config.is_decoder
-        self.is_sparse = is_sparse
-        self.layer = nn.ModuleList()
-        self.layer.append(
-            SwitchTransformersLayerSelfAttention(config, has_relative_attention_bias=has_relative_attention_bias)
-        )
-        if self.is_decoder:
-            self.layer.append(SwitchTransformersLayerCrossAttention(config))
-
-        self.layer.append(SwitchTransformersLayerFF(config, is_sparse=self.is_sparse))
-
-    def forward(
-        self,
-        hidden_states,
-        attention_mask=None,
-        position_bias=None,
-        encoder_hidden_states=None,
-        encoder_attention_mask=None,
-        encoder_decoder_position_bias=None,
-        layer_head_mask=None,
-        cross_attn_layer_head_mask=None,
-        past_key_value=None,
-        use_cache=False,
-        output_attentions=False,
-        output_router_logits=True,
-        return_dict=True,
-    ):
-        self_attention_outputs = self.layer[0](
-            hidden_states,
-            attention_mask=attention_mask,
-            position_bias=position_bias,
-            layer_head_mask=layer_head_mask,
-            past_key_value=self_attn_past_key_value,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-        )
-        hidden_states, present_key_value_state = self_attention_outputs[:2]
-        attention_outputs = self_attention_outputs[2:]  # Keep self-attention outputs and relative position weights
-
-        # clamp inf values to enable fp16 training
-        if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
-            clamp_value = torch.finfo(hidden_states.dtype).max - 1000
-            hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
-
-        do_cross_attention = self.is_decoder and encoder_hidden_states is not None
-        if do_cross_attention:
-            # the actual query length is unknown for cross attention
-            # if using past key value states. Need to inject it here
-            if present_key_value_state is not None:
-                query_length = present_key_value_state[0].shape[2]
-            else:
-                query_length = None
-
-            cross_attention_outputs = self.layer[1](
-                hidden_states,
-                key_value_states=encoder_hidden_states,
-                attention_mask=encoder_attention_mask,
-                position_bias=encoder_decoder_position_bias,
-                layer_head_mask=cross_attn_layer_head_mask,
-                past_key_value=cross_attn_past_key_value,
-                query_length=query_length,
-                use_cache=use_cache,
-                output_attentions=output_attentions,
-            )
-            hidden_states = cross_attention_outputs[0]
-
-            # clamp inf values to enable fp16 training
-            if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
-                clamp_value = torch.finfo(hidden_states.dtype).max - 1000
-                hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
-
-            # Combine self attn and cross attn key value states
-            if present_key_value_state is not None:
-                present_key_value_state = present_key_value_state + cross_attention_outputs[1]
-
-            # Keep cross-attention outputs and relative position weights
-            attention_outputs = attention_outputs + cross_attention_outputs[2:]
-
-        # Apply Feed Forward layer
-        hidden_states = self.layer[-1](hidden_states, output_router_logits)
-
-        if isinstance(hidden_states, tuple):
-            hidden_states, router_tuple = hidden_states
-        else:
-            router_tuple = (torch.zeros((1,), device=hidden_states.device, dtype=torch.int64),)
-
-        # clamp inf values to enable fp16 training
-        if hidden_states.dtype == torch.float16 and torch.isinf(hidden_states).any():
-            clamp_value = torch.finfo(hidden_states.dtype).max - 1000
-            hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
-
-        outputs = (hidden_states,)
-
-        if use_cache:
-            outputs = outputs + (present_key_value_state,) + attention_outputs + (router_tuple,)
-        else:
-            outputs = outputs + attention_outputs + (router_tuple,)
-
-        return outputs  # hidden-states, present_key_value_states, (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights), (router_tuple)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-class RoBERTaLMHead(nn.Module):
+class MaskedLMHead(nn.Module):
     """
     Head for masked language modeling.
     """
 
-    def __init__(self, embed_dim, output_dim, weight):
+    def __init__(self, embed_dim: int, output_dim: int, weight: torch.Tensor):
         super().__init__()
         self.dense = nn.Linear(embed_dim, embed_dim, bias=False)
         self.layer_norm = nn.LayerNorm(embed_dim)
@@ -559,7 +490,9 @@ class RoBERTaLMHead(nn.Module):
 
 
 class ContactPredictionHead(nn.Module):
-    """Performs symmetrization, apc, and computes a logistic regression on the output features"""
+    """
+    Performs symmetrization, apc, and computes a logistic regression on the output features
+    """
 
     def __init__(
         self,
@@ -574,7 +507,9 @@ class ContactPredictionHead(nn.Module):
         self.prepend_bos = prepend_bos
         self.append_eos = append_eos
         if append_eos and eos_idx is None:
-            raise ValueError("Using an alphabet with eos token, but no eos token was passed in.")
+            raise ValueError(
+                "Using an alphabet with eos token, but no eos token was passed in."
+            )
         self.eos_idx = eos_idx
         self.regression = nn.Linear(in_features, 1, bias)
         self.activation = nn.Sigmoid()
@@ -600,6 +535,7 @@ class ContactPredictionHead(nn.Module):
         attentions = attentions.permute(0, 2, 3, 1)
         return self.activation(self.regression(attentions).squeeze(3))
 
+
 def symmetrize(x):
     "Make layer symmetric in final two dimensions, used for contact prediction."
     return x + x.transpose(-1, -2)
@@ -615,5 +551,3 @@ def apc(x):
     avg.div_(a12)  # in-place to reduce memory
     normalized = x - avg
     return normalized
-
-
