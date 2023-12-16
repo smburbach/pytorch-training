@@ -112,6 +112,7 @@ class BALMMoEConfig(PretrainedConfig):
         num_experts: int = 8,
         expert_capacity: Optional[int] = None,
         expert_capacity_multiplier: float = 1.25,
+        expert_activation: str = "gelu",
         max_position_embeddings: int = 320,
         router_bias: bool = False,
         router_jitter: float = 0.01,
@@ -130,8 +131,8 @@ class BALMMoEConfig(PretrainedConfig):
         **kwargs,
     ):
         self.vocab_size = vocab_size
-        self.d_model = hidden_size
-        self.d_ff = intermediate_size
+        self.embed_dim = hidden_size
+        self.ffn_embed_dim = intermediate_size
 
         self.max_position_embeddings = max_position_embeddings
         self.num_layers = num_hidden_layers
@@ -141,6 +142,7 @@ class BALMMoEConfig(PretrainedConfig):
         if expert_capacity is None:
             expert_capacity = max_position_embeddings / num_attention_heads * expert_capacity_multiplier
         self.expert_capacity = int(expert_capacity)
+        self.expert_activation = expert_activation
 
         self.router_bias = router_bias
         self.router_jitter = router_jitter
