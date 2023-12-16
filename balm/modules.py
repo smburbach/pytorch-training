@@ -625,7 +625,22 @@ class MoETransformerLayer(nn.Module):
 
 class MaskedLMHead(nn.Module):
     """
-    Head for masked language modeling.
+    Masked language modeling head for BALM models. Implements the same LM head as `ESM-2`_.
+
+    Parameters:
+    -----------
+    embed_dim : int
+        Embedding dimension.
+
+    output_dim : int
+        Output dimension.
+
+    weight : torch.Tensor
+        Embedding weight matrix.
+
+
+    .. ESM-2:
+        https://www.biorxiv.org/content/10.1101/622803v2
     """
 
     def __init__(self, embed_dim: int, output_dim: int, weight: torch.Tensor):
@@ -636,6 +651,19 @@ class MaskedLMHead(nn.Module):
         self.bias = nn.Parameter(torch.zeros(output_dim))
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
+        """
+        Process features into outputs.
+
+        Parameters:
+        -----------
+        features : torch.Tensor
+            Input tensor of shape (batch_size, sequence_length, embed_dim).
+
+        Returns:
+        --------
+        x : torch.Tensor
+            Output tensor of shape (batch_size, sequence_length, output_dim).
+        """
         x = self.dense(features)
         x = nn.GELU(x)
         x = self.layer_norm(x)
