@@ -96,6 +96,13 @@ class BALMMoEConfig(PretrainedConfig):
             Whether to output router probabilities to compute router auxiliary loss.
         use_cache (`bool`, *optional*, defaults to `True`):
             Whether or not the model should return the last key/values attentions (not used by all models).
+
+        position_embedding_type (`str`, *optional*, defaults to `"absolute"`):
+            Type of position embedding. Choose one of `"absolute"`, `"relative_key"`, `"relative_key_query"`. For
+            positional embeddings use `"absolute"`. For more information on `"relative_key"`, please refer to
+            [Self-Attention with Relative Position Representations (Shaw et al.)](https://arxiv.org/abs/1803.02155).
+            For more information on `"relative_key_query"`, please refer to *Method 4* in [Improve Transformer Models
+            with Better Relative Position Embeddings (Huang et al.)](https://arxiv.org/abs/2009.13658).
     """
 
     model_type = "BALM_MoE"
@@ -114,17 +121,19 @@ class BALMMoEConfig(PretrainedConfig):
         expert_capacity_multiplier: float = 1.25,
         expert_activation: str = "gelu",
         max_position_embeddings: int = 320,
+        position_embedding_type: str = "absolute",
         router_bias: bool = False,
         router_jitter: float = 0.01,
-        router_dtype="float32",
+        router_dtype: str = "float32",
         router_ignore_padding_tokens: bool = False,
-        hidden_dropout_prob: float = 0.1,
-        attention_probs_dropout_prob: float = 0.1,
+        dropout_prob: float = 0.1,
+        hidden_dropout_prob: Optional[float] = None,
+        attention_probs_dropout_prob: Optional[float] = None,
+        embedding_dropout_prob: Optional[float] = None,
         layer_norm_eps: float = 1e-12,
         router_z_loss_coef: float = 0.001,
         router_aux_loss_coef: float = 0.001,
         initializer_factor: float = 1.0,
-        dense_act_fn: str = "relu",
         add_router_probs: bool = False,
         pad_token_id: Optional[int] = None,
         mask_token_id: Optional[int] = None,
@@ -133,37 +142,60 @@ class BALMMoEConfig(PretrainedConfig):
         self.vocab_size = vocab_size
         self.embed_dim = hidden_size
         self.ffn_embed_dim = intermediate_size
-
-        self.max_position_embeddings = max_position_embeddings
         self.num_layers = num_hidden_layers
         self.num_heads = num_attention_heads
+        self.max_position_embeddings = max_position_embeddings
+        position_embedding_type = position_embedding_type.lower()
+        if position_embedding_type not in [
+            "absolute",
+            "relative_key",
+            "relative_key_query",
+        ]:
+            raise ValueError(
+                f"`position_embedding_type` must be one of 'absolute', 'relative_key' or 'relative_key_query', got {position_embedding_type}"
+            )
+        self.position_embedding_type = position_embedding_type
 
         self.num_experts = num_experts
         if expert_capacity is None:
-            expert_capacity = max_position_embeddings / num_attention_heads * expert_capacity_multiplier
+            expert_capacity = (
+                max_position_embeddings
+                / num_attention_heads
+                * expert_capacity_multiplier
+            )
         self.expert_capacity = int(expert_capacity)
         self.expert_activation = expert_activation
 
         self.router_bias = router_bias
         self.router_jitter = router_jitter
         if router_dtype not in ["float32", "float16", "bfloat16"]:
-            raise ValueError(f"`router_dtype` must be one of 'float32', 'float16' or 'bfloat16', got {router_dtype}")
+            raise ValueError(
+                f"`router_dtype` must be one of 'float32', 'float16' or 'bfloat16', got {router_dtype}"
+            )
         self.router_dtype = router_dtype
         self.router_ignore_padding_tokens = router_ignore_padding_tokens
         self.add_router_probs = add_router_probs
-
-        self.hidden_dropout_rate = hidden_dropout_prob
-        self.attn_dropout_rate = attention_probs_dropout_prob
-        self.layer_norm_eps = layer_norm_eps
-        self.initializer_factor = initializer_factor
-
         self.router_z_loss_coef = router_z_loss_coef
         self.router_aux_loss_coef = router_aux_loss_coef
-        self.dense_act_fn = dense_act_fn
+
+        self.hidden_dropout_rate = (
+            hidden_dropout_prob if hidden_dropout_prob is not None else dropout_prob
+        )
+        self.attn_dropout_rate = (
+            attention_probs_dropout_prob
+            if attention_probs_dropout_prob is not None
+            else dropout_prob
+        )
+        self.embedding_dropout_rate = (
+            embedding_dropout_prob
+            if embedding_dropout_prob is not None
+            else dropout_prob
+        )
+        self.layer_norm_eps = layer_norm_eps
+        self.initializer_factor = initializer_factor
 
         super().__init__(
             pad_token_id=pad_token_id,
             mask_token_id=mask_token_id,
             **kwargs,
         )
-
