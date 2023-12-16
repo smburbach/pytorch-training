@@ -32,7 +32,30 @@ from .config import BALMMoEConfig
 
 
 class TransformerLayer(nn.Module):
-    """Transformer layer block."""
+    """
+    BALM transformer layer. Approximately follows the ESM-2 implementation,
+    but differs in a few ways:
+        - includes (optional) dropout
+        - we don't use rotary embeddings, which aren't (yet?) compatible with
+          torch's optimized implementation of nn.MultiheadAttention
+
+    Parameters:
+    -----------
+    embed_dim : int
+        Embedding dimension.
+
+    ffn_embed_dim : int
+        Feed-forward network embedding dimension. Typically 4x the embedding dimension.
+
+    attention_heads : int
+        Number of attention heads.
+
+    add_bias_kv : bool, optional
+        Whether to add bias to the key and value projections. The default is True.
+
+    dropout_rate : float, optional
+        Dropout rate. The default is 0.0.
+    """
 
     def __init__(
         self,
@@ -40,13 +63,13 @@ class TransformerLayer(nn.Module):
         ffn_embed_dim: int,
         attention_heads: int,
         add_bias_kv: bool = True,
-        dropout_p: float = 0.0,
+        dropout_rate: float = 0.0,
     ):
         super().__init__()
         self.embed_dim = embed_dim
         self.ffn_embed_dim = ffn_embed_dim
         self.attention_heads = attention_heads
-        self.drop_p = dropout_p
+        self.dropout_rate = dropout_rate
 
         # can't use rotary embeddings with nn.MultiheadAttention
         # see: https://discuss.pytorch.org/t/is-there-a-way-to-implement-rope-around-nn-multiheadattention-somehow/175051
@@ -60,12 +83,12 @@ class TransformerLayer(nn.Module):
             self.attention_heads,
             add_bias_kv=add_bias_kv,
             add_zero_attn=False,
-            dropout=self.drop_p,
+            dropout=self.dropout_rate,
         )
 
         self.ff_linear_1 = nn.Linear(self.embed_dim, self.ffn_embed_dim)
         self.ff_linear_2 = nn.Linear(self.ffn_embed_dim, self.embed_dim)
-        self.ff_dropout = nn.Dropout(self.drop_p)
+        self.ff_dropout = nn.Dropout(self.dropout_rate)
         self.ff_activation = nn.GELU()
 
         self.norm1 = nn.LayerNorm(self.embed_dim)
@@ -80,9 +103,29 @@ class TransformerLayer(nn.Module):
     ):
         """
 
-        NOTE: if `need_weights` is True, the output will be a tuple of ``(x, attn)``. Also,
-        nn.MultiHeadAttention will not be able to use the optimized torch implementation
-        of ``scaled_dot_product_attention``. See `here`_ for more details.
+        Parameters:
+        -----------
+        x : torch.Tensor
+            Input tensor of shape (batch_size, sequence_length, embed_dim).
+
+        attn_mask : torch.Tensor, optional
+            Attention mask of shape (batch_size, sequence_length, sequence_length). The default is None.
+
+        key_padding_mask : torch.Tensor, optional
+            Mask of shape (batch_size, sequence_length). The default is None.
+
+        need_weights : bool, optional
+            Whether to return attention weights. The default is False.
+
+            .. NOTE: if `need_weights` is ``True``, the output will be a tuple of (x, attn). Also,
+            nn.MultiHeadAttention will not be able to use the optimized torch implementation
+            of ``scaled_dot_product_attention``. See `here`_ for more details.
+
+        Returns:
+        --------
+        x : torch.Tensor or Tuple[torch.Tensor, torch.Tensor]
+            Output tensor of shape (batch_size, sequence_length, embed_dim). If `need_weights` is
+            ``True``, the output will be a tuple of (x, attn).
 
         .. _here:
             https://pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html#torch.nn.MultiheadAttention.forward
@@ -121,12 +164,43 @@ class TransformerLayer(nn.Module):
 
 class Router(nn.Module):
     """
-    Router that allows tokens to choose their own top-1 experts assignment.
+    Default router for BALM MoE models.
 
-    This router uses the same mechanism as in Switch Transformer (https://arxiv.org/abs/2101.03961) and V-MoE
-    (https://arxiv.org/abs/2106.05974): tokens choose their top experts. Items are sorted by router_probs and then
-    routed to their expert of choice until the expert's `expert_capacity` is reached. **There is no guarantee that
-    each token is processed by an expert**, or that each expert receives at least one token.
+    This router uses the mechanism introduced by `Switch Transformers`_, in which
+    tokens select a single expert. Tokens are  routed to their expert of choice until the
+    expert's `expert_capacity` is reached. **There is no guarantee that each token will be
+    processed by an expert**, or that every expert receives at least one token.
+
+    If tokens are routed to an expert above capacity, they are not processed by any expert
+    and their hidden states are passed to the subsequent layer unchanged.
+
+
+    Parameters:
+    -----------
+    embed_dim : int
+        Embedding dimension.
+
+    num_experts : int
+        Number of experts.
+
+    expert_capacity : int
+        Maximum number of tokens that can be routed to each expert.
+
+    dtype : str, optional
+        Data type to use for router probabilities. The default is "float32".
+
+    bias : bool, optional
+        Whether to add bias to the router classifier. The default is False.
+
+    jitter : float, optional
+        Amount of jitter to add to the router probabilities. The default is 0.0.
+
+    ignore_padding_tokens : bool, optional
+        Whether to ignore padding tokens when computing router probabilities. The default is False.
+
+
+    .. _Switch Transformers:
+        https://arxiv.org/abs/2101.03961
     """
 
     def __init__(
@@ -188,20 +262,23 @@ class Router(nn.Module):
         self, x: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Generic forward function for every Router class. Each Router expects to have the same input hidden states
-        (`x`) corresponding to the hidden states for each token, the `expert_capacity` corresponding to the
-        number of tokens the Router can send to each expert.
+        Route tokens to experts.
 
-        Each Router works as follows: from the hidden states for each token, it gets the `router_probs` and
-        `router_logits`. This will assign for each token, the raw probability that it should be assigned
-        to each expert.
+        Parameters:
+        -----------
+        x : torch.Tensor
+            Input tensor of shape (batch_size, sequence_length, embed_dim).
 
-        Args:
-            x (`torch.Tensor`) :
-                (batch_size, sequence_length, hidden_dim) inputs to send to experts.
         Returns:
-            Tuple[`torch.Tensor`, `torch.Tensor`, `torch.Tensor`] Tuple containing the expert index, the router probs
-            and the router logits. The router probabilities and logits are required to compute the loss.
+        --------
+        expert_indices : torch.Tensor
+            Tensor of shape (batch_size, sequence_length, num_experts) indicating which expert
+
+        router_probs : torch.Tensor
+            Tensor of shape (batch_size, sequence_length, num_experts) containing the router probabilities.
+
+        router_logits : torch.Tensor
+            Tensor of shape (batch_size, sequence_length, num_experts) containing the raw router logits.
         """
         router_probs, router_logits = self._compute_router_probabilities(x)
         expert_indices = torch.argmax(router_probs, dim=-1)
@@ -252,7 +329,7 @@ class Router(nn.Module):
 # Copied from transformers.models.t5.modeling_t5.T5DenseActDense with T5->SwitchTransformers
 class Expert(nn.Module):
     """
-
+    Implementation of the Switch Transformers Expert module.
 
     Parameters:
     -----------
@@ -285,6 +362,19 @@ class Expert(nn.Module):
         self.activation = nn.GELU() if activation.lower() == "gelu" else nn.ReLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Process the input hidden states.
+
+        Parameters:
+        -----------
+        x : torch.Tensor
+            Input tensor of shape (batch_size, sequence_length, embed_dim).
+
+        Returns:
+        --------
+        x : torch.Tensor
+            Output tensor of shape (batch_size, sequence_length, embed_dim).
+        """
         x = self.wi(x)
         x = self.activation(x)
         x = self.dropout(x)
@@ -302,6 +392,20 @@ class Expert(nn.Module):
 class SparseMLP(nn.Module):
     """
     Implementation of the Switch Transformers Sparse MLP module.
+
+    Parameters:
+    -----------
+    config : BALMMoEConfig
+        Model configuration class with all the parameters of the model.
+        Initializing with a config file does not load the weights associated with the model, only the
+        configuration. Check out the [`~PreTrainedModel.from_pretrained`] method to load the model weights.
+
+    router_class : nn.Module, optional
+        Router class to use. The default is ``Router``.
+
+    expert_class : nn.Module, optional
+        Expert class to use. The default is ``Expert``.
+
     """
 
     def __init__(
@@ -333,15 +437,18 @@ class SparseMLP(nn.Module):
             )
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, Tuple]:
-        r"""
-        Hold on, this will be slightly tricky to understand In the correct order, a MoE layer does the following:
+        """
+        Route tokens to experts and process them.
 
-        1- Gets the `router_mask` from the router. The shape of the mask is `(batch_size, sequence_length, num_expert)`
-        and corresponds to the argmax of the `router_probs`. The probabilities are needed in the computation of the
-        hidden states : they are broadcasted to the hidden states values (can be interpreted as a scaling factor).
+        Parameters:
+        -----------
+        x : torch.Tensor
+            Input tensor of shape (batch_size, sequence_length, embed_dim).
 
-        2- Dispatch the tokens to its associated experts. We do a classic for loop over the experts and assign for each
-        expert the corresponding hidden states.
+        Returns:
+        --------
+        x : torch.Tensor
+            Output tensor of shape (batch_size, sequence_length, embed_dim).
 
         """
         # get the router mask, probabilities, and logits
@@ -364,14 +471,13 @@ class SparseMLP(nn.Module):
 
 class FFLayerMoE(nn.Module):
     """
-    Switch Transformers Feed Forward layer module. This is a wrapper around the Mixture of Experts module.
+    Feedforward layer with Mixture of Experts.
 
     Parameters:
-        config : ([`SwitchTransformersConfig`]): Model configuration class with all the parameters of the model.
-            Initializing with a config file does not load the weights associated with the model, only the
-            configuration. Check out the [`~PreTrainedModel.from_pretrained`] method to load the model weights.
-        is_sparse (`bool`):
-            Whether the MLP layer is a `Sparse` layer (contains a Mixture of Experts) or not
+    -----------
+    config : BALMMoEConfig
+        Model configuration class with all the parameters of the model.
+
     """
 
     def __init__(self, config: BALMMoEConfig):
@@ -383,6 +489,23 @@ class FFLayerMoE(nn.Module):
     def forward(
         self, x: torch.Tensor, output_router_logits: bool = True
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, Tuple]]:
+        """
+        Process the input hidden states.
+
+        Parameters:
+        -----------
+        x : torch.Tensor
+            Input tensor of shape (batch_size, sequence_length, embed_dim).
+
+        output_router_logits : bool, optional
+            Whether to output router logits. The default is True.
+
+        Returns:
+        --------
+        x : torch.Tensor or Tuple[torch.Tensor, Tuple]
+            Output tensor of shape (batch_size, sequence_length, embed_dim). If `output_router_logits` is
+            ``True``, the output will be a tuple of (x, router_logits).
+        """
         residual = x
         x, router_tuple = self.mlp(x)
         x = self.dropout(x)
@@ -393,7 +516,14 @@ class FFLayerMoE(nn.Module):
 
 
 class MoETransformerLayer(nn.Module):
-    """Transformer layer with Mixture of Experts."""
+    """
+    BALM transformer layer with Mixture of Experts.
+
+    Parameters:
+    -----------
+    config : BALMMoEConfig
+        Model configuration class with all the parameters of the model.
+    """
 
     def __init__(
         self,
@@ -435,10 +565,35 @@ class MoETransformerLayer(nn.Module):
         output_router_logits: bool = True,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, Tuple]]:
         """
+        Process the input hidden states.
 
-        NOTE: if `need_weights` is True, the output will be a tuple of ``(x, attn)``. Also,
-        nn.MultiHeadAttention will not be able to use the optimized torch implementation
-        of ``scaled_dot_product_attention``. See `here`_ for more details.
+        Parameters:
+        -----------
+        x : torch.Tensor
+            Input tensor of shape (batch_size, sequence_length, embed_dim).
+
+        attn_mask : torch.Tensor, optional
+            Attention mask of shape (batch_size, sequence_length, sequence_length). The default is None.
+
+        key_padding_mask : torch.Tensor, optional
+            Mask of shape (batch_size, sequence_length). The default is None.
+
+        need_weights : bool, optional
+            Whether to return attention weights. The default is False.
+
+            .. NOTE: if `need_weights` is ``True``, the output will be a tuple of (x, attn). Also,
+            nn.MultiHeadAttention will not be able to use the optimized torch implementation
+            of ``scaled_dot_product_attention``. See `here`_ for more details.
+
+        output_router_logits : bool, optional
+            Whether to output router logits. The default is True.
+
+        Returns:
+        --------
+        x : torch.Tensor or Tuple[torch.Tensor, Tuple]
+            Output tensor of shape (batch_size, sequence_length, embed_dim). If `output_router_logits` is
+            ``True``, the output will be a tuple of (x, router_logits).
+
 
         .. _here:
             https://pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html#torch.nn.MultiheadAttention.forward
@@ -480,7 +635,7 @@ class MaskedLMHead(nn.Module):
         self.weight = weight
         self.bias = nn.Parameter(torch.zeros(output_dim))
 
-    def forward(self, features):
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
         x = self.dense(features)
         x = nn.GELU(x)
         x = self.layer_norm(x)
