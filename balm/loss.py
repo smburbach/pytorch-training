@@ -24,8 +24,7 @@
 
 import torch
 
-
-__all__ = ['router_z_loss', 'load_balancing_loss_func']
+__all__ = ["router_z_loss", "load_balancing_loss_func"]
 
 
 def router_z_loss(router_logits: torch.Tensor) -> float:
@@ -48,8 +47,10 @@ def router_z_loss(router_logits: torch.Tensor) -> float:
     return torch.sum(z_loss) / (num_groups * tokens_per_group)
 
 
-def load_balancing_loss_func(router_probs: torch.Tensor, expert_indices: torch.Tensor) -> float:
-    r"""
+def load_balancing_loss_func(
+    router_probs: torch.Tensor, expert_indices: torch.Tensor
+) -> float:
+    """
     Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
 
     See Switch Transformer (https://arxiv.org/abs/2101.03961) for more details. This function implements the loss
@@ -84,7 +85,6 @@ def load_balancing_loss_func(router_probs: torch.Tensor, expert_indices: torch.T
     tokens_per_group_and_expert = torch.mean(expert_mask, axis=-2)
 
     router_prob_per_group_and_expert = torch.mean(router_probs, axis=-2)
-    return torch.mean(tokens_per_group_and_expert * router_prob_per_group_and_expert) * (num_experts**2)
-
-
-
+    return torch.mean(
+        tokens_per_group_and_expert * router_prob_per_group_and_expert
+    ) * (num_experts**2)
