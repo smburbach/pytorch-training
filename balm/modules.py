@@ -507,6 +507,7 @@ class FFLayerMoE(nn.Module):
             ``True``, the output will be a tuple of (x, router_logits).
         """
         residual = x
+        # router_tuple is (router_logits, expert_index)
         x, router_tuple = self.mlp(x)
         x = self.dropout(x)
         x = self.layer_norm(residual + x)
@@ -622,7 +623,7 @@ class MoETransformerLayer(nn.Module):
 
         # sparse feedforward
         residual = x
-        x, router_tuple = self.mlp(x)
+        x, router_tuple = self.mlp(x)  # router_tuple is (router_logits, expert_index)
         x = self.dropout(x)
         x = self.norm2(residual + x)
         if output_router_logits and router_tuple is not None:
