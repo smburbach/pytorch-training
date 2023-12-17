@@ -24,7 +24,7 @@
 
 import torch
 
-__all__ = ["router_z_loss", "load_balancing_loss_func"]
+__all__ = ["router_z_loss", "router_load_balancing_loss"]
 
 
 def router_z_loss(router_logits: torch.Tensor) -> float:
@@ -47,7 +47,7 @@ def router_z_loss(router_logits: torch.Tensor) -> float:
     return torch.sum(z_loss) / (num_groups * tokens_per_group)
 
 
-def load_balancing_loss_func(
+def router_load_balancing_loss(
     router_probs: torch.Tensor, expert_indices: torch.Tensor
 ) -> float:
     """
