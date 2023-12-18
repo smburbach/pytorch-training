@@ -27,7 +27,7 @@ from typing import Optional
 from transformers import PretrainedConfig
 
 
-class BALMMoEConfig(PretrainedConfig):
+class BalmMoEConfig(PretrainedConfig):
     r"""
     This is the configuration class to store the configuration of a [`SwitchTransformersModel`]. It is used to
     instantiate a SwitchTransformers model according to the specified arguments, defining the model architecture.
