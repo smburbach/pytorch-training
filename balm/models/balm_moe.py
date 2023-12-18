@@ -27,7 +27,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from ..config import BALMMoEConfig
+from ..config import BalmMoEConfig
 from ..embedding import RelativePositionalEmbedding
 from ..loss import router_load_balancing_loss, router_z_loss
 from ..modules import MaskedLMHead, MoETransformerLayer
@@ -38,7 +38,7 @@ class BalmMoE(nn.Module):
     BALM Mixture of Experts model.
     """
 
-    def __init__(self, config: BALMMoEConfig):
+    def __init__(self, config: BalmMoEConfig):
         super().__init__()
         self.config = config
         self.position_embedding_type = config.position_embedding_type
@@ -186,7 +186,7 @@ class BalmMoEForMaskedLM(nn.Module):
     BALM Mixture of Experts model for Masked Language Modeling.
     """
 
-    def __init__(self, config: BALMMoEConfig):
+    def __init__(self, config: BalmMoEConfig):
         super().__init__()
         self.config = config
         self.balm = BalmMoE(config)
@@ -242,7 +242,7 @@ class BalmMoEForMaskedLM(nn.Module):
             encoder_outputs["loss"] = loss
 
         if return_dict:
-            encoder_outputs["logits"] = logits
+            encoder_outputs["logits"] = lm_logits
             return encoder_outputs
         else:
             outputs = [
