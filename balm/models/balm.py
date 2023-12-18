@@ -28,7 +28,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from ..config import BALMConfig
+from ..config import BalmConfig
 from ..embedding import RelativePositionalEmbedding
 from ..modules import MaskedLMHead, TransformerLayer
 
@@ -38,20 +38,19 @@ class BalmModel(nn.Module):
     Base BALM model.
     """
 
-    def __init__(self, config: BALMonfig):
+    def __init__(self, config: BalmConfig):
         super().__init__()
         self.config = config
         self.position_embedding_type = config.position_embedding_type
         # token embedding
-        self.embed_scale = 1
         self.embed_tokens = nn.Embedding(
             config.vocab_size, config.embed_dim, padding_idx=config.pad_token_id
         )
         # position embedding
         if config.position_embedding_type in ["relative_key", "relative_key_query"]:
-            self.position_embeddings = RelativePositionalEmbedding(config.hidden_size)
+            self.embed_positions = RelativePositionalEmbedding(config.hidden_size)
         else:  # absolute
-            self.position_embeddings = nn.Embedding(
+            self.embed_positions = nn.Embedding(
                 config.max_position_embeddings, config.hidden_size
             )
         # layers
@@ -103,15 +102,15 @@ class BalmModel(nn.Module):
         hidden_states = {}
 
         # embeddings
-        x = self.embed_scale * self.embed_tokens(input_ids)
+        x = self.embed_tokens(input_ids)
         if self.position_embeddings_type in ["relative_key", "relative_key_query"]:
-            x = self.position_embeddings(x)
+            x = self.embed_positions(x)
         else:  # absolute embeddings
             position_ids = torch.arange(
                 input_ids.size(1), dtype=torch.long, device=input_ids.device
             )
             position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
-            position_embeds = self.position_embeddings(position_ids)
+            position_embeds = self.embed_positions(position_ids)
             x = x + position_embeds
         x = self.embedding_dropout(x)
 
@@ -131,11 +130,7 @@ class BalmModel(nn.Module):
 
         # results
         outputs = [x]
-        result = {
-            "last_hidden_state": x,
-            "router_z_loss": z_loss,
-            "router_aux_loss": aux_loss,
-        }
+        result = {"last_hidden_state": x}
         if output_attentions:
             # attentions: B x L x H x T x T
             attentions = torch.stack(attn_weights, 1)
@@ -155,10 +150,10 @@ class BalmForMaskedLM(nn.Module):
     BALM for Masked Language Modeling.
     """
 
-    def __init__(self, config: BALMMoEConfig):
+    def __init__(self, config: BalmConfig):
         super().__init__()
         self.config = config
-        self.balm = Balm(config)
+        self.balm = BalmModel(config)
         self.lm_head = MaskedLMHead(
             embed_dim=self.balm.embed_dim,
             output_dim=self.balm.vocab_size,
