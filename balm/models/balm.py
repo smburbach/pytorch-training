@@ -39,7 +39,7 @@ class BalmModel(nn.Module):
     """
 
     def __init__(self, config: BalmConfig):
-        super().__init__()
+        super(BalmModel).__init__()
         self.config = config
         self.position_embedding_type = config.position_embedding_type
         # token embedding
@@ -151,7 +151,7 @@ class BalmForMaskedLM(nn.Module):
     """
 
     def __init__(self, config: BalmConfig):
-        super().__init__()
+        super(BalmForMaskedLM).__init__()
         self.config = config
         self.balm = BalmModel(config)
         self.lm_head = MaskedLMHead(
@@ -176,7 +176,7 @@ class BalmForMaskedLM(nn.Module):
             return_dict (bool): return a dictionary of outputs
         """
         # encoder
-        encoder_outputs = self.balm_moe(
+        encoder_outputs = self.balm(
             input_ids,
             attention_mask,
             output_attentions=output_attentions,
