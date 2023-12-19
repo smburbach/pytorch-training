@@ -23,23 +23,31 @@
 
 
 import torch
+from torch import nn
 
 __all__ = ["router_z_loss", "router_load_balancing_loss"]
 
 
 def router_z_loss(router_logits: torch.Tensor) -> float:
     """
-    Compute the router z-loss implemented in PyTorch.
+    Computes the router z-loss.
 
-    The router z-loss was introduced in [Designing Effective Sparse Expert Models](https://arxiv.org/abs/2202.08906).
+    The router z-loss was introduced in `Designing Effective Sparse Expert Models`_.
     It encourages router logits to remain small in an effort to improve stability.
 
-    Args:
-        router_logits (`float`):
-            Input logits of shape [batch_size, sequence_length, num_experts]
+
+    Parameters:
+    -----------
+    router_logits : float
+        Input logits of shape [batch_size, sequence_length, num_experts]
 
     Returns:
-        Scalar router z-loss.
+    --------
+        Scalar router z-loss
+
+
+    .. _Designing Effective Sparse Expert Models:
+        https://arxiv.org/abs/2202.08906
     """
     num_groups, tokens_per_group, _ = router_logits.shape
     log_z = torch.logsumexp(router_logits, dim=-1)
@@ -51,20 +59,29 @@ def router_load_balancing_loss(
     router_probs: torch.Tensor, expert_indices: torch.Tensor
 ) -> float:
     """
-    Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
+    Computes the auxiliary load balancing loss.
 
-    See Switch Transformer (https://arxiv.org/abs/2101.03961) for more details. This function implements the loss
-    function presented in equations (4) - (6) of the paper. It aims at penalizing cases where the routing between
-    experts is too unbalanced.
+    See the `Switch Transformer manuscript`_ for more details. This function
+    implements the loss function presented in equations (4) - (6) of the paper.
+    It aims at penalizing cases where the routing between experts is too unbalanced.
 
-    Args:
-        router_probs (`torch.Tensor`):
-            Probability assigned to each expert per token. Shape: [batch_size, seqeunce_length, num_experts].
-        expert_indices (`torch.Tensor`):
-            Indices tensor of shape [batch_size, seqeunce_length] identifying the selected expert for a given token.
+
+    Parameters:
+    -----------
+    router_probs : torch.Tensor
+        Probability assigned to each expert per token.
+        Shape: [batch_size, seqeunce_length, num_experts].
+
+    expert_indices : torch.Tensor
+        Indices tensor of identifying the selected expert for a given token.
+        Shape: [batch_size, seqeunce_length]
 
     Returns:
         The auxiliary loss.
+
+
+    .. _Switch Transformer manuscript:
+        https://arxiv.org/abs/2101.03961
     """
     num_experts = router_probs.shape[-1]
 
@@ -75,7 +92,7 @@ def router_load_balancing_loss(
     if len(expert_indices.shape) == 2:
         expert_indices = expert_indices.unsqueeze(2)
 
-    expert_mask = torch.nn.functional.one_hot(expert_indices, num_experts)
+    expert_mask = nn.functional.one_hot(expert_indices, num_experts)
 
     # For a given token, determine if it was routed to a given expert.
     expert_mask = torch.max(expert_mask, axis=-2).values
