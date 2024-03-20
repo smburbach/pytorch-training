@@ -198,7 +198,7 @@ class Balm2Model(nn.Module):
         )
         self.final_layer_norm = nn.LayerNorm(embed_dim)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Parameters
         ----------
