@@ -1,9 +1,12 @@
+from collections import OrderedDict
 from typing import Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+
+from transfomers import EsmTokenizer
 
 
 class RotaryEmbeddings(nn.Module):
@@ -231,13 +234,32 @@ class Balm2Model(nn.Module):
             The output tensor. The shape is (batch_size, seq_len, embed_dim).
         """
         x = self.embed_tokens(x)
-
         for layer in self.layers:
             x = layer(x, x, x)
-
         x = self.final_layer_norm(x)
-
         return x
+
+
+class BalmTokenizer(EsmTokenizer):
+    def __init__(
+        self,
+        vocab_file: str,
+        unk_token: str = "<unk>",
+        cls_token: str = "<cls>",
+        pad_token: str = "<pad>",
+        mask_token: str = "<mask>",
+        eos_token: str = "<eos>",
+        **kwargs,
+    ):
+        super().__init__(
+            vocab_file,
+            unk_token=unk_token,
+            cls_token=cls_token,
+            pad_token=pad_token,
+            mask_token=mask_token,
+            eos_token=eos_token,
+            **kwargs,
+        )
 
 
 model = Balm2Model()
