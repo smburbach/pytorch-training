@@ -3,6 +3,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 
 
 class RotaryEmbeddings(nn.Module):
@@ -147,6 +148,24 @@ class RoformerBlock(nn.Module):
         return ff_output
 
 
+class LMHead(nn.Module):
+    """Head for masked language modeling."""
+
+    def __init__(self, embed_dim: int, output_dim: int):
+        super().__init__()
+        self.dense = nn.Linear(embed_dim, embed_dim)
+        self.layer_norm = nn.LayerNorm(embed_dim)
+        self.decoder = nn.Linear(embed_dim, output_dim, bias=False)
+        self.bias = nn.Parameter(torch.zeros(output_dim))
+
+    def forward(self, features):
+        x = self.dense(features)
+        x = nn.GELU(x)
+        x = self.layer_norm(x)
+        x = self.decoder(x) + self.bias
+        return x
+
+
 class Balm2Model(nn.Module):
     def __init__(
         self,
@@ -219,3 +238,65 @@ class Balm2Model(nn.Module):
         x = self.final_layer_norm(x)
 
         return x
+
+
+model = Balm2Model()
+
+# Assuming you have your dataset ready and DataLoader created
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=batch_size)
+
+# Assuming you have defined your loss function and optimizer
+loss_func = nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+
+# Training loop
+def train(model, train_loader, criterion, optimizer, epoch):
+    model.train()
+    total_loss = 0.0
+
+    for batch_idx, (inputs, targets) in enumerate(train_loader):
+        inputs, targets = inputs.to(device), targets.to(device)
+        optimizer.zero_grad()
+        outputs = model(inputs)
+        loss = criterion(outputs.view(-1, outputs.size(-1)), targets.view(-1))
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item()
+
+        if batch_idx % log_interval == 0 and batch_idx > 0:
+            print(
+                f"Train Epoch: {epoch} [{batch_idx * len(inputs)}/{len(train_loader.dataset)} "
+                f"({100. * batch_idx / len(train_loader):.0f}%)]\tLoss: {total_loss / log_interval:.6f}"
+            )
+            total_loss = 0.0
+
+
+def evaluate(model, val_loader, criterion):
+    model.eval()
+    total_loss = 0.0
+
+    with torch.no_grad():
+        for inputs, targets in val_loader:
+            inputs, targets = inputs.to(device), targets.to(device)
+            outputs = model(inputs)
+            loss = criterion(outputs.view(-1, outputs.size(-1)), targets.view(-1))
+            total_loss += loss.item()
+
+    avg_loss = total_loss / len(val_loader)
+    print(f"Validation set: Average loss: {avg_loss:.4f}")
+
+
+# Set device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
+
+# Training loop
+num_epochs = 10
+log_interval = 100
+
+for epoch in range(1, num_epochs + 1):
+    train(model, train_loader, loss_func, optimizer, epoch)
+    evaluate(model, val_loader, loss_func)
