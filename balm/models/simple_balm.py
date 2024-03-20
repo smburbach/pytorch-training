@@ -241,6 +241,35 @@ class Balm2Model(nn.Module):
 
 
 class BalmTokenizer(EsmTokenizer):
+    """
+    Tokenizer for Balm2 model. Adheres to the EsmTokenizer API.
+
+    Parameters
+    ----------
+    vocab_file : str
+        The path to the JSON-formatted vocabulary file.
+
+    unk_token : str, optional
+        The unknown token. Default is "<unk>".
+
+    cls_token : str, optional
+        The classification token. Default is "<cls>".
+
+    pad_token : str, optional
+        The padding token. Default is "<pad>".
+
+    mask_token : str, optional
+        The mask token. Default is "<mask>".
+
+    eos_token : str, optional
+        The end-of-sequence token. Default is "<eos>".
+
+    **kwargs
+        Additional keyword arguments passed to the parent class.
+
+
+    """
+
     def __init__(
         self,
         vocab_file: str,
