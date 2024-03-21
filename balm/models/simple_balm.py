@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from transfomers import EsmTokenizer
+from transformers import EsmTokenizer
 
 
 class RotaryEmbeddings(nn.Module):
@@ -151,7 +151,7 @@ class RoformerBlock(nn.Module):
         return ff_output
 
 
-class LMHead(nn.Module):
+class BalmLMHead(nn.Module):
     """Head for masked language modeling."""
 
     def __init__(self, embed_dim: int, output_dim: int):
@@ -169,7 +169,7 @@ class LMHead(nn.Module):
         return x
 
 
-class Balm2Model(nn.Module):
+class BalmModel(nn.Module):
     def __init__(
         self,
         embed_dim: int = 320,
@@ -206,15 +206,13 @@ class Balm2Model(nn.Module):
             The dropout probability.
 
         """
-        super(Balm2Model, self).__init__()
+        super().__init__()
         self.embed_dim = embed_dim
         self.max_len = max_len
         self.embed_tokens = nn.Embedding(vocab_size, embed_dim)
         self.layers = nn.ModuleList(
             [
-                RoformerBlock(
-                    embed_dim, heads, embed_dim, forward_expansion, max_len, dropout
-                )
+                RoformerBlock(embed_dim, heads, forward_expansion, max_len, dropout)
                 for _ in range(num_layers)
             ]
         )
@@ -240,9 +238,76 @@ class Balm2Model(nn.Module):
         return x
 
 
+class BalmForMaskedLM(nn.Module):
+    def __init__(
+        self,
+        embed_dim: int = 320,
+        heads: int = 20,
+        forward_expansion: int = 4,
+        num_layers: int = 6,
+        vocab_size: int = 25,
+        max_len: int = 320,
+        dropout: float = 0.1,
+    ):
+        """
+
+        Parameters
+        ----------
+        embed_dim : int
+            The input embedding dimension.
+
+        heads : int
+            The number of attention heads.
+
+        forward_expansion : int
+            The expansion factor for the feedforward network.
+
+        num_layers : int
+            The number of layers.
+
+        vocab_size : int
+            The size of the vocabulary.
+
+        max_len : int
+            The maximum sequence length.
+
+        dropout : float
+            The dropout probability.
+
+        """
+        super().__init__()
+        self.balm = BalmModel(
+            embed_dim=embed_dim,
+            heads=heads,
+            forward_expansion=forward_expansion,
+            num_layers=num_layers,
+            vocab_size=vocab_size,
+            max_len=max_len,
+            dropout=dropout,
+        )
+        self.lm_head = BalmLMHead(embed_dim, vocab_size)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters
+        ----------
+
+        x : torch.Tensor
+            The input tensor. Expected shape is (batch_size, seq_len).
+
+        Returns
+        -------
+        torch.Tensor
+            The output tensor. The shape is (batch_size, seq_len, vocab_size).
+        """
+        x = self.balm(x)
+        x = self.lm_head(x)
+        return x
+
+
 class BalmTokenizer(EsmTokenizer):
     """
-    Tokenizer for Balm2 model. Adheres to the EsmTokenizer API.
+    Tokenizer for Balm2 model. Follows the same API as the ESM tokenizer.
 
     Parameters
     ----------
@@ -291,7 +356,7 @@ class BalmTokenizer(EsmTokenizer):
         )
 
 
-model = Balm2Model()
+model = BalmForMaskedLM()
 
 # Assuming you have your dataset ready and DataLoader created
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
