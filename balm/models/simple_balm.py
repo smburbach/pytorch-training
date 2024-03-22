@@ -1,11 +1,10 @@
 from collections import OrderedDict
-from typing import Optional
+from typing import Any, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-
 from transformers import EsmTokenizer
 
 
@@ -356,6 +355,71 @@ class BalmTokenizer(EsmTokenizer):
         )
 
 
+def mask_tokens(
+    self,
+    inputs: torch.Tensor,
+    tokenizer: Any,
+    mlm_probability: float = 0.15,
+    special_tokens_mask: Optional[Union[torch.Tensor, Any]] = None,
+) -> Tuple[Any, Any]:
+    """
+    Mask tokens for language modeling. By default, 15% of tokens are selected for masking, of which
+    80% are masked, 10% are replaced with a random token, and 10% are unchanged.
+
+    Parameters
+    ----------
+    inputs : torch.Tensor
+        The input tensor. Expected shape is (batch_size, seq_len).
+
+    tokenizer : Any
+        The tokenizer.
+
+    mlm_probability : float, optional
+        The masking probability. Default is 0.15.
+
+    special_tokens_mask : Optional[Union[torch.Tensor, Any]], optional
+        The special tokens mask. Default is None.
+
+    Returns
+    -------
+    Tuple[Any, Any]
+        The masked input tensor and the labels tensor.
+    """
+    labels = inputs.clone()
+    # randomly select tokens for masking
+    probability_matrix = torch.full(labels.shape, mlm_probability)  # uniform
+    if special_tokens_mask is None:
+        special_tokens_mask = [
+            tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True)
+            for val in labels.tolist()
+        ]
+        special_tokens_mask = torch.tensor(special_tokens_mask, dtype=torch.bool)
+    else:
+        special_tokens_mask = special_tokens_mask.bool()
+
+    probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
+    masked_indices = torch.bernoulli(probability_matrix).bool()
+    labels[~masked_indices] = -100  # ignore non-masked tokens for loss calculation
+
+    # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
+    indices_replaced = (
+        torch.bernoulli(torch.full(labels.shape, 0.8)).bool() & masked_indices
+    )
+    inputs[indices_replaced] = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
+
+    # 10% of the time, we replace masked input tokens with random word
+    indices_random = (
+        torch.bernoulli(torch.full(labels.shape, 0.5)).bool()
+        & masked_indices
+        & ~indices_replaced
+    )
+    random_words = torch.randint(len(self.tokenizer), labels.shape, dtype=torch.long)
+    inputs[indices_random] = random_words[indices_random]
+
+    # The rest of the time (10% of the time) we keep the masked input tokens unchanged
+    return inputs, labels
+
+
 model = BalmForMaskedLM()
 
 # Assuming you have your dataset ready and DataLoader created
@@ -368,17 +432,26 @@ optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
 
 # Training loop
-def train(model, train_loader, criterion, optimizer, epoch):
+def train(model, train_loader, loss_func, optimizer, tokenizer, epoch):
     model.train()
     total_loss = 0.0
 
-    for batch_idx, (inputs, targets) in enumerate(train_loader):
-        inputs, targets = inputs.to(device), targets.to(device)
+    for batch_idx, batch in enumerate(train_loader):
+        inputs, labels = mask_tokens(batch["input_ids"], tokenizer)
+        inputs, labels = inputs.to(device), labels.to(device)
         optimizer.zero_grad()
         outputs = model(inputs)
-        loss = criterion(outputs.view(-1, outputs.size(-1)), targets.view(-1))
+        loss = loss_func(outputs.view(-1, outputs.size(-1)), labels.view(-1))
         loss.backward()
         optimizer.step()
+
+        # for batch_idx, (inputs, targets) in enumerate(train_loader):
+        #     inputs, targets = inputs.to(device), targets.to(device)
+        #     optimizer.zero_grad()
+        #     outputs = model(inputs)
+        #     loss = criterion(outputs.view(-1, outputs.size(-1)), targets.view(-1))
+        #     loss.backward()
+        #     optimizer.step()
 
         total_loss += loss.item()
 
@@ -390,16 +463,24 @@ def train(model, train_loader, criterion, optimizer, epoch):
             total_loss = 0.0
 
 
-def evaluate(model, val_loader, criterion):
+def evaluate(model, val_loader, tokenizer, loss_func):
     model.eval()
     total_loss = 0.0
 
     with torch.no_grad():
-        for inputs, targets in val_loader:
-            inputs, targets = inputs.to(device), targets.to(device)
+        for batch in val_loader:
+            inputs, labels = mask_tokens(batch["input_ids"], tokenizer)
+            inputs, labels = inputs.to(device), labels.to(device)
             outputs = model(inputs)
-            loss = criterion(outputs.view(-1, outputs.size(-1)), targets.view(-1))
+            loss = loss_func(outputs.view(-1, outputs.size(-1)), labels.view(-1))
             total_loss += loss.item()
+
+    # with torch.no_grad():
+    #     for inputs, targets in val_loader:
+    #         inputs, targets = inputs.to(device), targets.to(device)
+    #         outputs = model(inputs)
+    #         loss = criterion(outputs.view(-1, outputs.size(-1)), targets.view(-1))
+    #         total_loss += loss.item()
 
     avg_loss = total_loss / len(val_loader)
     print(f"Validation set: Average loss: {avg_loss:.4f}")
@@ -414,5 +495,5 @@ num_epochs = 10
 log_interval = 100
 
 for epoch in range(1, num_epochs + 1):
-    train(model, train_loader, loss_func, optimizer, epoch)
+    train(model, train_loader, loss_func, optimizer, tokenizer, epoch)
     evaluate(model, val_loader, loss_func)
