@@ -67,6 +67,84 @@ class SwiGLU(nn.Module):
         return F.sigmoid(x1) * x2
 
 
+class SimpleTransformer(nn.Module):
+    def __init__(
+        self,
+        vocab_size: int,
+        embed_dim: int = 512,
+        ff_dim: int = 2048,
+        num_layers: int = 6,
+        num_heads: int = 8,
+        max_len: int = 320,
+        dropout: float = 0.1,
+    ):
+        """
+        Simple Transformer
+        """
+        super(SimpleTransformer, self).__init__()
+        self.embedding = nn.Embedding(vocab_size, embed_dim)
+        self.positional_encoding = nn.Parameter(torch.zeros(1, max_len, embed_dim))
+        self.encoder_layer = nn.TransformerEncoderLayer(
+            d_model=embed_dim,
+            nhead=num_heads,
+            dim_feedforward=ff_dim,
+            dropout=dropout,
+        )
+        self.transformer_encoder = nn.TransformerEncoder(
+            self.encoder_layer, num_layers=num_layers
+        )
+        self.output_layer = nn.Linear(embed_dim, vocab_size)
+        self.init_weights()
+
+    def init_weights(self):
+        initrange = 0.1
+        self.embedding.weight.data.uniform_(-initrange, initrange)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.embedding(x) + self.positional_encoding[:, : x.shape[1], :]
+        x = self.transformer_encoder(x)
+        x = self.output_layer(x)
+        return x
+
+
+class SimpleTransformerForMaskedLM(nn.Module):
+    def __init__(
+        self,
+        vocab_size: int,
+        embed_dim: int = 512,
+        ff_dim: int = 2048,
+        num_layers: int = 6,
+        num_heads: int = 8,
+        max_len: int = 320,
+        dropout: float = 0.1,
+    ):
+        """
+        Simple Transformer for masked language modeling.
+        """
+        super(SimpleTransformerForMaskedLM, self).__init__()
+        self.encoder = SimpleTransformer(
+            vocab_size=vocab_size,
+            embed_dim=embed_dim,
+            ff_dim=ff_dim,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            max_len=max_len,
+            dropout=dropout,
+        )
+        self.lm_head = nn.Linear(embed_dim, vocab_size, bias=False)
+
+        self.init_weights()
+
+    def init_weights(self):
+        initrange = 0.1
+        self.lm_head.weight.data.uniform_(-initrange, initrange)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.encoder(x)
+        logits = self.lm_head(x)
+        return logits
+
+
 class RoformerBlock(nn.Module):
     def __init__(
         self,
