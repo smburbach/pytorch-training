@@ -27,7 +27,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from ..modules import BalmLMHead, MaskedLMOutput, RoformerBlock
+from ..modules import BalmLMHead, MaskedLMOutput, RoformerLayer
 
 
 class BalmModel(nn.Module):
@@ -35,11 +35,14 @@ class BalmModel(nn.Module):
         self,
         embed_dim: int = 512,
         ffn_dim: int = 2048,
-        num_heads: int = 8,
         num_layers: int = 6,
-        vocab_size: int = 25,
-        max_len: int = 320,
-        dropout: float = 0.1,
+        num_heads: int = 8,
+        vocab_size: int = 33,
+        max_length: int = 320,
+        dropout: float = 0.0,
+        attention_dropout: float = 0.1,
+        attention_batch_first: bool = True,
+        layer_norm_eps: float = 1e-5,
     ):
         """
 
@@ -68,23 +71,36 @@ class BalmModel(nn.Module):
 
         """
         super().__init__()
-        self.embed_dim = embed_dim
-        self.max_len = max_len
+        # self.embed_dim = embed_dim
+        # self.max_length = max_length
         self.embed_tokens = nn.Embedding(vocab_size, embed_dim)
         self.layers = nn.ModuleList(
             [
-                RoformerBlock(embed_dim, ffn_dim, num_heads, max_len, dropout)
+                RoformerLayer(
+                    embed_dim,
+                    ffn_dim,
+                    num_heads,
+                    max_length,
+                    dropout=dropout,
+                    attention_dropout=attention_dropout,
+                    attention_batch_first=attention_batch_first,
+                    layer_norm_eps=layer_norm_eps,
+                )
                 for _ in range(num_layers)
             ]
         )
-        self.final_layer_norm = nn.LayerNorm(embed_dim)
+        self.final_layer_norm = nn.LayerNorm(embed_dim, eps=layer_norm_eps)
 
     @property
     def num_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     def forward(
-        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
+        self,
+        x: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        need_weights: bool = False,
     ) -> torch.Tensor:
         """
         Parameters
@@ -100,7 +116,13 @@ class BalmModel(nn.Module):
         """
         x = self.embed_tokens(x)
         for layer in self.layers:
-            x = layer(x, x, x, mask=mask)
+            x = layer(
+                x,
+                x,
+                x,
+                attention_mask=attention_mask,
+                key_padding_mask=key_padding_mask,
+            )
         x = self.final_layer_norm(x)
         return x
 
@@ -110,11 +132,14 @@ class BalmForMaskedLM(nn.Module):
         self,
         embed_dim: int = 512,
         ffn_dim: int = 2048,
-        num_heads: int = 8,
         num_layers: int = 6,
-        vocab_size: int = 25,
-        max_len: int = 320,
-        dropout: float = 0.1,
+        num_heads: int = 8,
+        vocab_size: int = 33,
+        max_length: int = 320,
+        dropout: float = 0.0,
+        attention_dropout: float = 0.1,
+        attention_batch_first: bool = True,
+        layer_norm_eps: float = 1e-5,
     ):
         """
 
@@ -149,10 +174,14 @@ class BalmForMaskedLM(nn.Module):
             num_heads=num_heads,
             num_layers=num_layers,
             vocab_size=vocab_size,
-            max_len=max_len,
+            max_length=max_length,
             dropout=dropout,
+            attention_dropout=attention_dropout,
+            attention_batch_first=attention_batch_first,
+            layer_norm_eps=layer_norm_eps,
         )
         self.lm_head = BalmLMHead(embed_dim, vocab_size)
+        self.criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
     @property
     def num_parameters(self):
@@ -163,6 +192,8 @@ class BalmForMaskedLM(nn.Module):
         input_ids: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        need_weights: bool = False,
     ) -> MaskedLMOutput:
         """
         Parameters
@@ -176,13 +207,19 @@ class BalmForMaskedLM(nn.Module):
         torch.Tensor
             The output tensor. The shape is (batch_size, seq_len, vocab_size).
         """
-        x = self.balm(input_ids, mask=attention_mask)
+        x = self.balm(
+            input_ids,
+            attention_mask=attention_mask,
+            key_padding_mask=key_padding_mask,
+            need_weights=need_weights,
+        )
         logits = self.lm_head(x)
 
         masked_lm_loss = None
         if labels is not None:
-            masked_lm_loss = F.cross_entropy(
-                logits.view(-1, logits.size(-1)), labels.view(-1), ignore_index=-100
+            masked_lm_loss = self.criterion(
+                logits.view(-1, logits.size(-1)),
+                labels.view(-1),
             )
 
         return MaskedLMOutput(

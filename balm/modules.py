@@ -80,14 +80,17 @@ class SwiGLU(nn.Module):
         return F.sigmoid(x1) * x2
 
 
-class RoformerBlock(nn.Module):
+class RoformerLayer(nn.Module):
     def __init__(
         self,
         embed_dim: int,
         ffn_dim: int,
         num_heads: int,
         max_len: int,
-        dropout: float,
+        dropout: float = 0.0,
+        attention_dropout: float = 0.0,
+        attention_batch_first: bool = True,
+        layer_norm_eps: float = 1e-5,
     ):
         """
         Transformer block with rotary embeddings and SwiGLU activation.
@@ -109,17 +112,19 @@ class RoformerBlock(nn.Module):
         dropout : float
             The dropout probability.
         """
-        super(RoformerBlock, self).__init__()
+        super().__init__()
         self.rotary_embedding = RotaryPositionalEmbeddings(embed_dim, max_len)
 
-        self.norm1 = nn.LayerNorm(embed_dim)
-        self.norm2 = nn.LayerNorm(embed_dim)
+        self.norm1 = nn.LayerNorm(embed_dim, eps=layer_norm_eps)
+        self.norm2 = nn.LayerNorm(embed_dim, eps=layer_norm_eps)
         self.attention = nn.MultiheadAttention(
-            embed_dim=embed_dim, num_heads=num_heads, dropout=dropout, batch_first=True
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            dropout=attention_dropout,
+            batch_first=attention_batch_first,
         )
 
         # SwiGLU
-        # hidden_dim = embed_dim * forward_expansion
         self.feed_forward = nn.Sequential(
             nn.Linear(embed_dim, ffn_dim),
             SwiGLU(),
@@ -139,7 +144,9 @@ class RoformerBlock(nn.Module):
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        need_weights: bool = False,
     ):
         # pre-norm
         query_norm = self.norm1(query)
@@ -152,19 +159,29 @@ class RoformerBlock(nn.Module):
         value_rot = self.rotary_embedding(value_norm)
 
         # attention
-        attn_output, _ = self.attention(
-            query_rot, key_rot, value_rot, key_padding_mask=mask
+        x, _ = self.attention(
+            query_rot,
+            key_rot,
+            value_rot,
+            attn_mask=attention_mask,
+            key_padding_mask=key_padding_mask,
+            need_weights=need_weights,
         )
-        attn_output = query + self.dropout(attn_output)
+        if need_weights:
+            x, weights = x
+        x = query + self.dropout(x)
 
         # pre-norm
-        attn_output_norm = self.norm2(attn_output)
+        residual = x
+        x = self.norm2(x)
 
         # feedforward
-        ff_output = self.feed_forward(attn_output_norm)
-        ff_output = attn_output + self.dropout(ff_output)
+        x = self.feed_forward(x)
+        x = residual + self.dropout(x)
 
-        return ff_output
+        if need_weights:
+            return x, weights
+        return x
 
 
 class BalmLMHead(nn.Module):
