@@ -58,7 +58,7 @@ class TokenizerBase:
             raise ValueError("Vocab must be a string or dictionary")
 
 
-class SimpleTokenizer(TokenizerBase):
+class Tokenizer(TokenizerBase):
     """
     Simple tokenizer class. Provides basic methods for tokenization and encoding.
     """
