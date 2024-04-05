@@ -539,7 +539,7 @@ class SparseTransformerLayer(nn.Module):
             embed_dim=self.embed_dim,
             num_heads=self.num_heads,
             dropout=self.attention_dropout,
-            # batch_first=True,
+            batch_first=attention_batch_first,
         )
 
         self.mlp = SparseMLP(
@@ -626,6 +626,116 @@ class SparseTransformerLayer(nn.Module):
         x, router_tuple = self.mlp(x)  # router_tuple is (router_logits, expert_index)
         x = self.ff_dropout(x)
         x = self.norm2(residual + x)
+        if output_router_logits and router_tuple is not None:
+            if need_weights:
+                return (x, attn, router_tuple)
+            return (x, router_tuple)
+        if need_weights:
+            return (x, attn)
+        return x
+
+
+class SparseRoformerLayer(nn.Module):
+    """
+    Sparse Roformer layer.
+
+
+    """
+
+    def __init__(
+        self,
+        embed_dim: int,
+        ffn_dim: int,
+        num_heads: int,
+        num_experts: int,
+        max_len: int,
+        expert_capacity: int,
+        expert_activation: str = "gelu",
+        expert_ffn_dropout: float = 0.0,
+        ffn_dropout: float = 0.0,
+        attention_dropout: float = 0.0,
+        attention_batch_first: bool = True,
+        layer_norm_eps: float = 1e-5,
+        router_dtype: str = "float32",
+        router_bias: bool = False,
+        router_jitter: float = 0.0,
+        router_ignore_padding_tokens: bool = True,
+        router_class: nn.Module = "Router",
+        expert_class: nn.Module = "Expert",
+    ):
+        super().__init__()
+        self.rotary_embedding = RotaryPositionalEmbeddings(embed_dim, max_len)
+
+        self.norm1 = nn.LayerNorm(embed_dim)
+        self.norm2 = nn.LayerNorm(embed_dim)
+        self.attention = nn.MultiheadAttention(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            dropout=attention_dropout,
+            # batch_first=attention_batch_first,
+        )
+
+        self.mlp = SparseMLP(
+            embed_dim=embed_dim,
+            ffn_dim=ffn_dim,
+            num_experts=num_experts,
+            expert_capacity=expert_capacity,
+            expert_activation=expert_activation,
+            expert_ffn_dropout=expert_ffn_dropout,
+            router_dtype=router_dtype,
+            router_bias=router_bias,
+            router_jitter=router_jitter,
+            router_ignore_padding_tokens=router_ignore_padding_tokens,
+            router_class=router_class,
+            expert_class=expert_class,
+        )
+        self.ff_dropout = nn.Dropout(ffn_dropout)
+
+        self.norm1 = nn.LayerNorm(embed_dim, eps=layer_norm_eps)
+        self.norm2 = nn.LayerNorm(embed_dim, eps=layer_norm_eps)
+
+    def forward(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        need_weights: bool = False,
+        output_router_logits: bool = True,
+    ):
+        # pre-norm
+        query_norm = self.norm1(query)
+        key_norm = self.norm1(key)
+        value_norm = self.norm1(value)
+
+        # rotary embeddings
+        query_rot = self.rotary_embedding(query_norm)
+        key_rot = self.rotary_embedding(key_norm)
+        value_rot = self.rotary_embedding(value_norm)
+
+        # attention
+        x, _ = self.attention(
+            query_rot,
+            key_rot,
+            value_rot,
+            attn_mask=attention_mask,
+            key_padding_mask=key_padding_mask,
+            need_weights=need_weights,
+        )
+        # x = query + self.dropout(x)
+        x = query + x
+        if need_weights:
+            x, attn = x
+
+        # pre-norm
+        residual = x
+        x = self.norm2(x)
+
+        # sparse feedforward
+        x, router_tuple = self.mlp(x)
+        x = residual + self.ff_dropout(x)
+
         if output_router_logits and router_tuple is not None:
             if need_weights:
                 return (x, attn, router_tuple)
