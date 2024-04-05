@@ -24,11 +24,12 @@
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 __all__ = ["router_z_loss", "router_load_balancing_loss"]
 
 
-def router_z_loss(router_logits: torch.Tensor) -> float:
+def router_z_loss(router_logits: torch.Tensor) -> torch.Tensor:
     """
     Computes the router z-loss.
 
@@ -36,14 +37,15 @@ def router_z_loss(router_logits: torch.Tensor) -> float:
     It encourages router logits to remain small in an effort to improve stability.
 
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     router_logits : float
         Input logits of shape [batch_size, sequence_length, num_experts]
 
-    Returns:
-    --------
-        Scalar router z-loss
+    Returns
+    -------
+    torch.Tensor
+        The z-loss for the router
 
 
     .. _Designing Effective Sparse Expert Models:
@@ -57,7 +59,7 @@ def router_z_loss(router_logits: torch.Tensor) -> float:
 
 def router_load_balancing_loss(
     router_probs: torch.Tensor, expert_indices: torch.Tensor
-) -> float:
+) -> torch.Tensor:
     """
     Computes the auxiliary load balancing loss.
 
@@ -76,31 +78,26 @@ def router_load_balancing_loss(
         Indices tensor of identifying the selected expert for a given token.
         Shape: [batch_size, seqeunce_length]
 
-    Returns:
-        The auxiliary loss.
+    Returns
+    -------
+    torch.Tensor
+        The auxiliary load balancing loss for the router
 
 
     .. _Switch Transformer manuscript:
         https://arxiv.org/abs/2101.03961
     """
     num_experts = router_probs.shape[-1]
-
-    # cast the expert indices to int64, otherwise one-hot encoding will fail
-    if expert_indices.dtype != torch.int64:
+    if expert_indices.dtype != torch.int64:  # F.one_hot fails if not int64
         expert_indices = expert_indices.to(torch.int64)
-
     if len(expert_indices.shape) == 2:
         expert_indices = expert_indices.unsqueeze(2)
-
-    expert_mask = nn.functional.one_hot(expert_indices, num_experts)
-
-    # For a given token, determine if it was routed to a given expert.
+    # expert mask
+    expert_mask = F.one_hot(expert_indices, num_experts)
     expert_mask = torch.max(expert_mask, axis=-2).values
-
-    # cast to float32 otherwise mean will fail
-    expert_mask = expert_mask.to(torch.float32)
+    expert_mask = expert_mask.to(torch.float32)  # torch.mean needs float32
+    # compute aux loss
     tokens_per_group_and_expert = torch.mean(expert_mask, axis=-2)
-
     router_prob_per_group_and_expert = torch.mean(router_probs, axis=-2)
     return torch.mean(
         tokens_per_group_and_expert * router_prob_per_group_and_expert
