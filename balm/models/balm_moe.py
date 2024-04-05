@@ -56,26 +56,14 @@ class BalmMoE(nn.Module):
         router_bias: bool = False,
         router_jitter: float = 0.0,
         router_ignore_padding_tokens: bool = True,
-        position_embedding_type: str = "relative_key_query",
         padding_idx: int = 0,
         router_class: nn.Module = Router,
         expert_class: nn.Module = Expert,
         # config: BalmMoEConfig,
     ):
         super().__init__()
-        # self.config = config
-        self.position_embedding_type = position_embedding_type
-        # token embedding
-        self.embed_scale = 1
         self.embed_tokens = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
-        # self.embed_positions = nn.Embedding(max_length, embed_dim)
         self.embed_positions = RelativePositionalEmbedding(embed_dim)
-        # position embedding
-        # if position_embedding_type in ["relative_key", "relative_key_query"]:
-        #     self.position_embeddings = RelativePositionalEmbedding(ffn_dim)
-        # else:  # absolute
-        #     self.position_embeddings = nn.Embedding(max_length, ffn_dim)
-        # layers
         self.layers = nn.ModuleList(
             [
                 SparseTransformerLayer(
@@ -84,18 +72,25 @@ class BalmMoE(nn.Module):
                     num_heads=num_heads,
                     num_experts=num_experts,
                     expert_capacity=expert_capacity,
+                    expert_activation=expert_activation,
+                    expert_ffn_dropout=expert_ffn_dropout,
+                    attention_dropout=attention_dropout,
+                    attention_batch_first=attention_batch_first,
+                    layer_norm_eps=layer_norm_eps,
+                    router_dtype=router_dtype,
+                    router_bias=router_bias,
+                    router_jitter=router_jitter,
+                    router_ignore_padding_tokens=router_ignore_padding_tokens,
+                    router_class=router_class,
+                    expert_class=expert_class,
                 )
                 for _ in range(num_layers)
             ]
         )
         self.embedding_dropout = nn.Dropout(token_embedding_dropout)
         self.final_norm = nn.LayerNorm(embed_dim)
-        # # LM head
-        # self.lm_head = BalmLMHead(
-        #     embed_dim=embed_dim,
-        #     output_dim=vocab_size,
-        #     # weight=self.embed_tokens.weight,
-        # )
+
+        self.attention_batch_first = attention_batch_first
 
     @property
     def num_parameters(self):
@@ -158,23 +153,11 @@ class BalmMoE(nn.Module):
 
         # embeddings
         x = self.embed_tokens(input_ids)
-        # x = x + self.embed_positions(input_ids)
         x = self.embed_positions(x)
-
-        # x = self.embed_scale * self.embed_tokens(input_ids)
-        # if self.position_embeddings_type in ["relative_key", "relative_key_query"]:
-        #     x = self.position_embeddings(x)
-        # else:  # absolute embeddings
-        #     position_ids = torch.arange(
-        #         input_ids.size(1), dtype=torch.long, device=input_ids.device
-        #     )
-        #     position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
-        #     position_embeds = self.position_embeddings(position_ids)
-        #     x = x + position_embeds
         x = self.embedding_dropout(x)
 
         # encoder
-        x = x.transpose(0, 1)
+        # x = x.transpose(0, 1)
         for layer_idx, layer in enumerate(self.layers, 1):
             x = layer(
                 x,
@@ -191,9 +174,10 @@ class BalmMoE(nn.Module):
             router_logits.append(router_tuple[0])
             expert_indexes.append(router_tuple[1])
             if output_hidden_states:
-                hidden_states[layer_idx] = x.transpose(0, 1)
+                # hidden_states[layer_idx] = x.transpose(0, 1)
+                hidden_states[layer_idx] = x
         x = self.final_norm(x)
-        x = x.transpose(0, 1)
+        # x = x.transpose(0, 1)
 
         # Compute the router losses (z_loss + auxiliary loss)
         cat_router_logits = torch.cat(router_logits, dim=1)
@@ -249,7 +233,6 @@ class BalmMoEForMaskedLM(nn.Module):
         router_ignore_padding_tokens: bool = True,
         router_z_loss_coef: float = 0.001,
         router_aux_loss_coef: float = 0.001,
-        position_embedding_type: str = "relative_key_query",
         padding_idx: int = 0,
         router_class: nn.Module = Router,
         expert_class: nn.Module = Expert,
@@ -273,7 +256,7 @@ class BalmMoEForMaskedLM(nn.Module):
             router_dtype=router_dtype,
             router_bias=router_bias,
             router_jitter=router_jitter,
-            position_embedding_type=position_embedding_type,
+            router_ignore_padding_tokens=router_ignore_padding_tokens,
             padding_idx=padding_idx,
             router_class=router_class,
             expert_class=expert_class,
