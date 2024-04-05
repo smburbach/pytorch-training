@@ -45,29 +45,39 @@ class BalmModel(nn.Module):
         layer_norm_eps: float = 1e-5,
     ):
         """
+        BALM model, with rotary embeddings, pre-norm, and SwiGLU activations.
 
         Parameters
         ----------
-        embed_dim : int
+        embed_dim : int, default = 512
             The input embedding dimension.
 
-        heads : int
-            The number of attention heads.
+        ffn_dim : int, default = 2048
+            The dimension of the feedforward network.
 
-        forward_expansion : int
-            The expansion factor for the feedforward network.
-
-        num_layers : int
+        num_layers : int, default = 6
             The number of layers.
 
-        vocab_size : int
+        num_heads : int, default = 8
+            The number of attention heads.
+
+        vocab_size : int, default = 33
             The size of the vocabulary.
 
-        max_len : int
+        max_length : int, default = 320
             The maximum sequence length.
 
-        dropout : float
+        dropout : float, default = 0.0
             The dropout probability.
+
+        attention_dropout : float, default = 0.1
+            The dropout probability for the attention weights.
+
+        attention_batch_first : bool, default = True
+            Whether to put the batch dimension first in the attention weights.
+
+        layer_norm_eps : float, default = 1e-5
+            The epsilon value for the layer normalization.
 
         """
         super().__init__()
@@ -122,8 +132,13 @@ class BalmModel(nn.Module):
                 x,
                 attention_mask=attention_mask,
                 key_padding_mask=key_padding_mask,
+                need_weights=need_weights,
             )
+            if need_weights:
+                x, attn = x
         x = self.final_layer_norm(x)
+        if need_weights:
+            return x, attn
         return x
 
 
@@ -142,29 +157,40 @@ class BalmForMaskedLM(nn.Module):
         layer_norm_eps: float = 1e-5,
     ):
         """
+        BALM model for masked language modeling. Uses the base BALM model with rotary embeddings, pre-norm,
+        and SwiGLU activations, and adds a language modeling head.
 
         Parameters
         ----------
-        embed_dim : int
+        embed_dim : int, default = 512
             The input embedding dimension.
 
-        heads : int
-            The number of attention heads.
+        ffn_dim : int, default = 2048
+            The dimension of the feedforward network.
 
-        forward_expansion : int
-            The expansion factor for the feedforward network.
-
-        num_layers : int
+        num_layers : int, default = 6
             The number of layers.
 
-        vocab_size : int
+        num_heads : int, default = 8
+            The number of attention heads.
+
+        vocab_size : int, default = 33
             The size of the vocabulary.
 
-        max_len : int
+        max_length : int, default = 320
             The maximum sequence length.
 
-        dropout : float
+        dropout : float, default = 0.0
             The dropout probability.
+
+        attention_dropout : float, default = 0.1
+            The dropout probability for the attention weights.
+
+        attention_batch_first : bool, default = True
+            Whether to put the batch dimension first in the attention weights.
+
+        layer_norm_eps : float, default = 1e-5
+            The epsilon value for the layer normalization.
 
         """
         super().__init__()
@@ -193,7 +219,8 @@ class BalmForMaskedLM(nn.Module):
         labels: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
-        need_weights: bool = False,
+        output_attentions: bool = False,
+        output_hidden_states: bool = False,
     ) -> MaskedLMOutput:
         """
         Parameters
@@ -211,8 +238,10 @@ class BalmForMaskedLM(nn.Module):
             input_ids,
             attention_mask=attention_mask,
             key_padding_mask=key_padding_mask,
-            need_weights=need_weights,
+            need_weights=output_attentions,
         )
+        if output_attentions:
+            x, attn = x
         logits = self.lm_head(x)
 
         masked_lm_loss = None
@@ -222,10 +251,15 @@ class BalmForMaskedLM(nn.Module):
                 labels.view(-1),
             )
 
-        return MaskedLMOutput(
+        output = MaskedLMOutput(
             logits=logits,
             loss=masked_lm_loss,
         )
+        if output_attentions:
+            output.attentions = attn
+        if output_hidden_states:
+            output.hidden_states = x
+        return output
 
 
 # from typing import Optional
