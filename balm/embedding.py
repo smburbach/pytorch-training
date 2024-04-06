@@ -87,7 +87,7 @@ class RotaryPositionalEmbeddings(nn.Module):
             The input tensor with rotary embeddings applied. The shape is (batch_size, seq_len, dim).
 
         """
-        pos_emb = self.get_positional_embeddings(x)
+        pos_emb = self.get_positional_embeddings(x).to(x.device)
         s, c = pos_emb[:, : self.dim // 2], pos_emb[:, self.dim // 2 :]
         x1, x2 = x[..., : self.dim // 2], x[..., self.dim // 2 :]
         x_rot = torch.cat(((x1 * c) + (x2 * s), (-x1 * s) + (x2 * c)), dim=-1)
