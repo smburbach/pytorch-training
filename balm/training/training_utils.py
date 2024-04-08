@@ -22,7 +22,11 @@
 #
 
 
+import random
 from enum import Enum
+
+import numpy as np
+import torch
 
 
 class ExplicitEnum(Enum):
@@ -95,3 +99,17 @@ class OptimizerNames(ExplicitEnum):
     GALORE_ADAMW_LAYERWISE = "galore_adamw_layerwise"
     GALORE_ADAMW_8BIT_LAYERWISE = "galore_adamw_8bit_layerwise"
     GALORE_ADAFACTOR_LAYERWISE = "galore_adafactor_layerwise"
+
+
+def set_seed(seed: int):
+    """
+    Helper function for reproducible behavior to set the seed in
+    ``random``, ``numpy``, and ``torch`` (if installed).
+
+    Args:
+        seed (`int`): The seed to set.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # safe even if cuda isn't available
