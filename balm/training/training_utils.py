@@ -22,11 +22,13 @@
 #
 
 
-import random
+# import random
 from enum import Enum
+from functools import partial
 
-import numpy as np
+# import numpy as np
 import torch
+from torch.optim.lr_scheduler import LambdaLR
 
 
 class ExplicitEnum(Enum):
@@ -101,15 +103,60 @@ class OptimizerNames(ExplicitEnum):
     GALORE_ADAFACTOR_LAYERWISE = "galore_adafactor_layerwise"
 
 
-def set_seed(seed: int):
+# def set_seed(seed: int):
+#     """
+#     Helper function for reproducible behavior to set the seed in
+#     ``random``, ``numpy``, and ``torch`` (if installed).
+
+#     Args:
+#         seed (`int`): The seed to set.
+#     """
+#     random.seed(seed)
+#     np.random.seed(seed)
+#     torch.manual_seed(seed)
+#     torch.cuda.manual_seed_all(seed)  # safe even if cuda isn't available
+
+
+def _scheduler_lambda(
+    current_step: int, *, num_warmup_steps: int, num_training_steps: int
+):
+    if current_step < num_warmup_steps:
+        return float(current_step) / float(max(1, num_warmup_steps))
+    return max(
+        0.0,
+        float(num_training_steps - current_step)
+        / float(max(1, num_training_steps - num_warmup_steps)),
+    )
+
+
+def get_scheduler(
+    optimizer: torch.optim.Optimizer,
+    num_warmup_steps: int,
+    num_training_steps: int,
+    last_epoch: int = -1,
+):
     """
-    Helper function for reproducible behavior to set the seed in
-    ``random``, ``numpy``, and ``torch`` (if installed).
+    Create a schedule with a learning rate that decreases linearly from the initial lr set in the optimizer to 0, after
+    a warmup period during which it increases linearly from 0 to the initial lr set in the optimizer.
+
+    Taken from https://github.com/huggingface/transformers/blob/09f9f566de83eef1f13ee83b5a1bbeebde5c80c1/src/transformers/optimization.py#L108
 
     Args:
-        seed (`int`): The seed to set.
+        optimizer ([`~torch.optim.Optimizer`]):
+            The optimizer for which to schedule the learning rate.
+        num_warmup_steps (`int`):
+            The number of steps for the warmup phase.
+        num_training_steps (`int`):
+            The total number of training steps.
+        last_epoch (`int`, *optional*, defaults to -1):
+            The index of the last epoch when resuming training.
+
+    Return:
+        `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.
     """
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)  # safe even if cuda isn't available
+    lr_lambda = partial(
+        _scheduler_lambda,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=num_training_steps,
+    )
+    return LambdaLR(optimizer, lr_lambda, last_epoch)
