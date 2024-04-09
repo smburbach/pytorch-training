@@ -154,16 +154,21 @@ class DataCollator:
         self.mlm_probability = mlm_probability
 
     def __call__(
-        self, examples: List[Union[List[int], Any, Dict[str, Any]]]
+        self,
+        examples: List[Union[List[int], Any, Dict[str, Any]]],
+        mask_probs: Optional[str] = None,
     ) -> Dict[str, Any]:
         # convert to tensors if necessary
-        if isinstance(examples, torch.Tensor):
+        if isinstance(examples, dict):
+            batch = examples
+        elif isinstance(examples, torch.Tensor):
             batch = {"input_ids": examples}
         else:
             if isinstance(examples[0], (list, tuple, np.ndarray)):
                 examples = [torch.tensor(e, dtype=torch.long) for e in examples]
             batch = {"input_ids": torch.stack(examples)}
-        # mask
+
+        # MLM masking
         if self.mlm:
             batch["input_ids"], batch["labels"] = self.mask_tokens(batch["input_ids"])
         else:
@@ -171,11 +176,11 @@ class DataCollator:
             if self.tokenizer.pad_token_id is not None:
                 labels[labels == self.tokenizer.pad_token_id] = -100
             batch["labels"] = labels
-        # attention mask
-        attn_mask = torch.ones_like(batch["input_ids"])  # 1 for non-pad tokens
-        attn_mask[batch["input_ids"] == self.tokenizer.pad_idx] = 0  # 0 for pad tokens
-        batch["attention_mask"] = attn_mask.bool()
-        return batch
+
+        # key padding mask
+        kp_mask = torch.zeros_like(batch["input_ids"])  # 1 for non-pad tokens
+        kp_mask[batch["input_ids"] == self.tokenizer.pad_idx] = 1  # 0 for pad tokens
+        batch["key_padding_mask"] = kp_mask.bool()
 
     def mask_tokens(
         self, inputs: torch.Tensor, special_tokens_mask: Optional[Any] = None
