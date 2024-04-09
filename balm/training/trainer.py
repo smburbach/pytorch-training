@@ -23,18 +23,21 @@
 
 
 import math
+import random
 from functools import cached_property
 from typing import Callable, Dict, Optional, Tuple, Union
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from ..data import DataCollator, Dataset
+from ..modules import MaskedLMOutput
 from ..tokenizer import TokenizerBase
 from .training_arguments import TrainingArguments
-from .training_utils import set_seed
+from .training_utils import get_scheduler
 
 
 class Trainer:
@@ -56,8 +59,12 @@ class Trainer:
         warmup_steps: Optional[int] = 0,
         weight_decay: Optional[float] = 0.01,
         learning_rate: Optional[float] = 4e-4,
+        adam_beta1: float = 0.9,
+        adam_beta2: float = 0.999,
+        adam_epsilon: float = 1e-8,
         deepspeed: bool = False,
         deepspeed_config: Optional[str] = None,
+        use_cpu: bool = False,
         seed: Optional[int] = 42,
         # compute_metrics: Optional[Callable[[EvalPrediction], Dict]] = None,
         # callbacks: Optional[List[TrainerCallback]] = None,
@@ -68,8 +75,9 @@ class Trainer:
         # self.args = args
 
         # seed gets set before anything else happens
+        self.seed = seed
         if seed is not None:
-            set_seed(seed)
+            self.set_seed(seed)
         self.model = model
         self.data_collator = data_collator
         self.train_dataset = train_dataset
@@ -85,17 +93,21 @@ class Trainer:
         self.warmup_steps = warmup_steps
         self.weight_decay = weight_decay
         self.learning_rate = learning_rate
+        self.adam_beta1 = adam_beta1
+        self.adam_beta2 = adam_beta2
+        self.adam_epsilon = adam_epsilon
         self.deepspeed = deepspeed
         self.deepspeed_config = deepspeed_config
+        self.use_cpu = use_cpu
         # if self.deepspeed:
         #     self.setup_deepspeed()
 
     @cached_property
     def device(self):
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() and not self.use_cpu:
             return torch.device("cuda")
-        elif torch.backends.mps.is_available():
-            return torch.device("mps")
+        # elif torch.backends.mps.is_available() and not self.use_cpu:
+        #     return torch.device("mps")
         else:
             return torch.device("cpu")
 
@@ -106,19 +118,31 @@ class Trainer:
         return 1
 
     @property
-    def n_epochs(self):
+    def num_epochs(self):
         if self.max_steps is None:
+            # print("max_steps is None")
             return self.epochs
-        return math.ceil(self.max_steps / len(self.train_dataset))
+        # print(f"max_steps is {self.max_steps}")
+        # print(f"train_dataset length is {len(self.train_dataset)}")
+        # print(f"num_epochs is {math.ceil(self.max_steps / len(self.train_dataset))}")
+        return math.ceil(
+            self.max_steps * self.total_train_batch_size / len(self.train_dataset)
+        )
 
     @property
-    def n_train_steps(self):
+    def num_train_steps(self):
         if self.max_steps is not None:
             return self.max_steps
         else:
-            return self.n_epochs * (
-                len(self.train_dataset) // self.total_train_batch_size
+            return (
+                self.num_epochs * len(self.train_dataset) // self.total_train_batch_size
             )
+
+    @property
+    def num_warmup_steps(self):
+        if self.warmup_steps < 1:  # warmup ratio
+            return int(self.num_train_steps * self.warmup_steps)
+        return self.warmup_steps
 
     @property
     def total_train_batch_size(self):
@@ -134,82 +158,148 @@ class Trainer:
     def train_dataloader(self):
         return DataLoader(
             self.train_dataset,
-            batch_size=self.args.per_device_train_batch_size,
+            batch_size=self.total_train_batch_size,
             shuffle=True,
-            collate_fn=self.data_collator,
+            # collate_fn=self.data_collator,
         )
 
     @property
     def eval_dataloader(self):
         if self.eval_dataset is None:
-            return None
+            return []
         return DataLoader(
             self.eval_dataset,
-            batch_size=self.args.per_device_eval_batch_size,
+            batch_size=self.total_eval_batch_size,
             shuffle=False,
-            collate_fn=self.data_collator,
+            # collate_fn=self.data_collator,
         )
 
     def train(self):
         model, optimizer = self.wrap_model()
+        model.train()
+
+        scheduler = get_scheduler(
+            optimizer=optimizer,
+            num_warmup_steps=self.num_warmup_steps,
+            num_training_steps=self.num_train_steps,
+        )
+
         completed_steps = 0
-        pbar = tqdm(total=self.n_train_steps)
-        for epoch in range(self.n_epochs):
-            for i, batch in enumerate(self.train_dataloader):
-                input_ids = batch["input_ids"].to(self.device)
-                labels = batch.get("labels", None)
-                if labels is not None:
-                    labels = labels.to(self.device)
-                attn_mask = batch.get("attention_mask", None)
-                if attn_mask is not None:
-                    attn_mask = attn_mask.to(self.device)
-                key_padding_mask = batch.get("key_padding_mask", None)
-                if key_padding_mask is not None:
-                    key_padding_mask = key_padding_mask.to(self.device)
+        pbar = tqdm(total=self.num_train_steps)
+        for epoch in range(self.num_epochs):
+            for batch in self.train_dataloader:
                 optimizer.zero_grad()
-                loss = model(
-                    input_ids,
-                    labels=labels,
-                    attention_mask=attn_mask,
-                    key_padding_mask=key_padding_mask,
+                collated = self.data_collator(batch)
+                inputs = self.place_inputs(collated)
+                outputs = model(
+                    input_ids=inputs["input_ids"],
+                    labels=inputs.get("labels", None),
+                    attention_mask=inputs.get("attention_mask", None),
+                    key_padding_mask=inputs.get("key_padding_mask", None),
                 )
+                loss = outputs.loss
                 loss.backward()
                 optimizer.step()
+                scheduler.step()
                 completed_steps += 1
                 pbar.update(1)
+
+                # logging
                 if completed_steps % self.logging_steps == 0:
-                    print(
-                        f"step {completed_steps} | loss: {loss.item()} | lr: {optimizer.param_groups[0]['lr']}"
+                    self.print_loss(
+                        steps=completed_steps,
+                        outputs=outputs,
+                        lr=optimizer.param_groups[0]["lr"],
+                        num_train_steps=self.num_train_steps,
                     )
-                if completed_steps % self.eval_steps == 0:
+
+                # eval
+                if (
+                    self.eval_steps is not None
+                    and self.eval_dataset is not None
+                    and completed_steps % self.eval_steps == 0
+                ):
                     print("Evaluating")
                     #  TODO: evaluate
-                if completed_steps % self.save_steps == 0:
+
+                # save
+                if (
+                    self.save_steps is not None
+                    and completed_steps % self.save_steps == 0
+                ):
                     print("Saving")
                     #  TODO: save
-                if completed_steps >= self.n_train_steps:
+
+                # done!
+                if completed_steps >= self.num_train_steps:
                     print("Training complete")
                     break
         pbar.close()
 
-    def wrap_model(self):
+    def evaluate(self, model: nn.Module):
+        pass
+
+    def wrap_model(self) -> Tuple[nn.Module, torch.optim.Optimizer]:
         if self.deepspeed:
             import deepspeed
 
-            model_parameters = filter(
-                lambda p: p.requires_grad, self.model.parameters()
-            )
+            model_params = [p for p in self.model.parameters() if p.requires_grad]
             model, optimizer, _, _ = deepspeed.initialize(
                 model=self.model,
-                model_parameters=model_parameters,
+                model_parameters=model_params,
                 config="path_to_deepspeed_config.json",
             )
         else:
             model = self.model.to(self.device)
             if self.device_count > 1 and torch.cuda.is_available():
                 model = nn.DataParallel(model)
-            optimizer = torch.optim.AdamW(model.parameters(), lr=self.learning_rate)
+            optimizer = torch.optim.AdamW(
+                model.parameters(),
+                lr=self.learning_rate,
+                weight_decay=self.weight_decay,
+                betas=(self.adam_beta1, self.adam_beta2),
+                eps=self.adam_epsilon,
+            )
         return model, optimizer
 
-    # def setup_deepspeed(self):
-    #     import deepspeed
+    def place_inputs(self, collated: Dict):
+        for key, value in collated.items():
+            if value is not None:
+                value = value.to(self.device)
+        return collated
+
+    @staticmethod
+    def set_seed(seed: int):
+        """
+        Helper function for reproducible behavior to set the seed in
+        ``random``, ``numpy``, and ``torch`` (if installed).
+
+        Args:
+            seed (`int`): The seed to set.
+        """
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)  # safe even if cuda isn't available
+
+    @staticmethod
+    def print_loss(
+        steps: int,
+        outputs: MaskedLMOutput,
+        lr: float,
+        num_train_steps: Optional[int] = None,
+    ):
+        if num_train_steps is not None:
+            total_spaces = len(str(num_train_steps))
+            spaces = " " * (total_spaces - len(str(steps)))
+        else:
+            spaces = ""
+        log_str = f"step {steps}{spaces} | loss: {outputs.loss.item():0.4f}"
+        if outputs.lm_loss is not None:
+            log_str += f" | lm_loss: {outputs.lm_loss.item():0.4f}"
+        if outputs.router_z_loss is not None:
+            log_str += f" | router_z_loss: {outputs.router_z_loss.item():0.4f}"
+        if outputs.router_aux_loss is not None:
+            log_str += f" | router_aux_loss: {outputs.router_aux_loss.item():0.4f}"
+        log_str += f" | lr: {lr:0.6f}"
+        print(log_str)
