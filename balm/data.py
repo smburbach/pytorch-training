@@ -181,6 +181,7 @@ class DataCollator:
         kp_mask = torch.zeros_like(batch["input_ids"])  # 1 for non-pad tokens
         kp_mask[batch["input_ids"] == self.tokenizer.pad_idx] = 1  # 0 for pad tokens
         batch["key_padding_mask"] = kp_mask.bool()
+        return batch
 
     def mask_tokens(
         self, inputs: torch.Tensor, special_tokens_mask: Optional[Any] = None
