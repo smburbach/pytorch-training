@@ -287,22 +287,6 @@ class Trainer:
                     all_preds.append(outputs.logits.argmax(dim=-1).detach().cpu())
                 all_labels.append(batch["labels"].detach().cpu())
 
-                # logits = outputs.logits.cpu().numpy()
-                # predictions = outputs.logits.argmax(dim=-1).cpu().numpy()
-                # labels = batch["labels"].cpu().numpy()
-
-                # if compute_metrics is not None:
-                #     metric_results = compute_metrics(
-                #         EvalPrediction(
-                #             predictions=outputs.logits.argmax(dim=-1),
-                #             labels=batch["labels"],
-                #             logits=outputs.logits,
-                #         )
-                #     )
-
-                # else:
-                #     metric_results = {}
-
         eval_pbar.close()
 
         all_logits = torch.cat(all_logits)
