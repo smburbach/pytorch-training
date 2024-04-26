@@ -22,7 +22,7 @@
 #
 
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -42,6 +42,7 @@ class RouterBase(nn.Module):
         dtype: str = "float32",
         bias: bool = False,
         jitter: float = 0.0,
+        num_routable_experts: Optional[int] = None,
     ):
         super().__init__()
         self.embed_dim = embed_dim
@@ -51,10 +52,12 @@ class RouterBase(nn.Module):
         self.bias = bias
         self.jitter = jitter
         self.classifier = nn.Linear(
-            embed_dim,
-            num_experts,
-            bias=bias,
-            dtype=dtype,
+            self.embed_dim,
+            num_routable_experts
+            if num_routable_experts is not None
+            else self.num_experts,
+            bias=self.bias,
+            dtype=self.dtype,
         )
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -169,43 +172,6 @@ class TopKRouter(RouterBase):
         self.top_k = top_k
         self.ignore_padding_tokens = ignore_padding_tokens
 
-    # def _compute_router_probabilities(
-    #     self, x: torch.Tensor
-    # ) -> Tuple[torch.Tensor, torch.Tensor]:
-    #     """
-    #     Computes router probabilities from input hidden states.
-
-    #     Parameters:
-    #     -----------
-    #     x : torch.Tensor
-    #         Tensor of shape (batch_size, sequence_length, hidden_dim) from which
-    #         router probabilities are computed.
-
-    #     Returns:
-    #     --------
-    #     router_probabilities : torch.Tensor
-    #         Tensor of shape (batch_size, sequence_length, num_experts) corresponding to
-    #         the probabilities for each token and expert. Used for routing tokens to experts.
-
-    #     router_logits : torch.Tensor
-    #         Logits tensor of shape (batch_size, sequence_length, num_experts) corresponding
-    #         to raw router logits. This is used for computing router z-loss.
-    #     """
-    #     # float32 is used to ensure stability. See the discussion of "selective precision" in
-    #     # https://arxiv.org/abs/2101.03961.
-    #     # we also store the input dtype so we can cast the output back to the original dtype
-    #     self.input_dtype = x.dtype
-    #     x = x.to(self.dtype)
-    #     if self.jitter > 0:
-    #         x *= torch.empty_like(x).uniform_(1.0 - self.jitter, 1.0 + self.jitter)
-
-    #     # shape: [batch_size, sequence_length, num_experts]
-    #     logits = self.classifier(x)
-
-    #     # apply softmax and cast back to the original dtype
-    #     probabilities = F.softmax(logits, dim=-1, dtype=self.dtype).to(self.input_dtype)
-    #     return probabilities, logits
-
     def forward(
         self, x: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -253,48 +219,7 @@ class TopKRouter(RouterBase):
 
 class ExpertChoiceRouter(RouterBase):
     """
-    This router uses the "experts choice" routing strategy introduced in the
-    `Mixture-of-Experts with Expert Choice Routing`_ paper. Each expert selects
-    its own tokens up to `expert_capacity`.
-
-    .. note::
-        There is no guarantee that each token will be processed by an expert,
-        or that every expert will receive at least one token. In fact, one of the
-        primary benefits of this router is that it allows each expert to select
-        its own tokens, often leading to heterogeneous token distributions among
-        the experts.
-
-    If tokens are not selected by any expert, they are passed to the subsequent
-    layer unchanged.
-
-
-    Parameters:
-    -----------
-    embed_dim : int
-        Embedding dimension.
-
-    num_experts : int
-        Number of experts.
-
-    expert_capacity : int
-        Maximum number of tokens that can be routed to each expert.
-
-    dtype : str, optional
-        Data type to use for router probabilities. The default is "float32".
-
-    bias : bool, optional
-        Whether to add bias to the router classifier. The default is ``False``.
-
-    jitter : float, optional
-        Amount of jitter to add to the router probabilities. The default is ``0.0``.
-
-    ignore_padding_tokens : bool, optional
-        Whether to ignore padding tokens when computing router probabilities.
-        The default is ``True``.
-
-
-    .. _Mixture-of-Experts with Expert Choice Routing:
-        https://arxiv.org/abs/2202.09368
+    Router that selects top-k tokens for each expert and has shared experts that process all tokens.
     """
 
     def __init__(
@@ -302,6 +227,7 @@ class ExpertChoiceRouter(RouterBase):
         embed_dim: int,
         num_experts: int,
         expert_capacity: int,
+        num_shared_experts: int = 1,  # Number of shared experts
         dtype: str = "float32",
         bias: bool = False,
         jitter: float = 0.0,
@@ -315,49 +241,16 @@ class ExpertChoiceRouter(RouterBase):
             dtype=dtype,
             bias=bias,
             jitter=jitter,
+            num_routable_experts=num_experts - num_shared_experts,
         )
+        self.num_shared_experts = num_shared_experts
         self.ignore_padding_tokens = ignore_padding_tokens
 
-    # def _compute_router_probabilities(
-    #     self, x: torch.Tensor
-    # ) -> Tuple[torch.Tensor, torch.Tensor]:
-    #     """
-    #     Computes router probabilities from input hidden states.
-
-    #     Parameters:
-    #     -----------
-    #     x : torch.Tensor
-    #         Tensor of shape (batch_size, sequence_length, hidden_dim) from which
-    #         router probabilities are computed.
-
-    #     Returns:
-    #     --------
-    #     router_probabilities : torch.Tensor
-    #         Tensor of shape (batch_size, sequence_length, num_experts) corresponding to
-    #         the probabilities for each token and expert. Used for routing tokens to experts.
-
-    #     router_logits : torch.Tensor
-    #         Logits tensor of shape (batch_size, sequence_length, num_experts) corresponding
-    #         to raw router logits. This is used for computing router z-loss.
-    #     """
-    #     # float32 is used to ensure stability. See the discussion of "selective precision" in
-    #     # https://arxiv.org/abs/2101.03961.
-    #     # we also store the input dtype so we can cast the output back to the original dtype
-    #     self.input_dtype = x.dtype
-    #     x = x.to(self.dtype)
-    #     if self.jitter > 0:
-    #         x *= torch.empty_like(x).uniform_(1.0 - self.jitter, 1.0 + self.jitter)
-
-    #     # shape: [batch_size, sequence_length, num_experts]
-    #     logits = self.classifier(x)
-
-    #     # apply softmax and cast back to the original dtype
-    #     probabilities = F.softmax(logits, dim=-1, dtype=self.dtype).to(self.input_dtype)
-    #     return probabilities, logits
-
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, Tuple]:
+    def forward(
+        self, x: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Route tokens to experts, selecting top-k tokens for each expert.
+        Route tokens to experts, selecting top-k tokens for each expert, and route all tokens to shared experts.
 
         Parameters:
         -----------
@@ -368,7 +261,7 @@ class ExpertChoiceRouter(RouterBase):
         --------
         expert_mask : torch.Tensor
             Binary mask tensor of shape (batch_size, sequence_length, num_experts) indicating
-            which tokens are selected for each expert.
+            which tokens are selected for each expert and which are processed by shared experts.
 
         router_probabilities : torch.Tensor
             Tensor of shape (batch_size, sequence_length, num_experts) containing
@@ -382,7 +275,7 @@ class ExpertChoiceRouter(RouterBase):
         expert_mask = torch.zeros_like(router_probs)
 
         # Select top-k tokens for each expert
-        for i in range(self.num_experts):
+        for i in range(self.num_experts - self.num_shared_experts):
             _, top_k_indices = torch.topk(
                 router_probs[..., i], k=self.expert_capacity, dim=1
             )
@@ -390,5 +283,12 @@ class ExpertChoiceRouter(RouterBase):
 
         # Ensure that the mask is binary
         expert_mask = expert_mask.clamp(max=1)
+
+        # Add shared experts processing all tokens
+        if self.num_shared_experts > 0:
+            shared_expert_mask = torch.ones_like(
+                router_probs[..., : self.num_shared_experts]
+            )
+            expert_mask = torch.cat((shared_expert_mask, expert_mask), dim=-1)
 
         return expert_mask, router_probs, router_logits
