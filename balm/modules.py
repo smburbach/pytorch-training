@@ -28,8 +28,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .activation import SwiGLU
 from .embedding import RelativePositionalEmbedding, RotaryPositionalEmbeddings
 from .loss import router_load_balancing_loss, router_z_loss
+from .router import TopKRouter
 
 
 class MaskedLMOutput:
@@ -74,10 +76,10 @@ class MaskedLMOutput:
         return tuple([o for o in output_attrs if o is not None])
 
 
-class SwiGLU(nn.Module):
-    def forward(self, x):
-        x1, x2 = x.chunk(2, dim=-1)
-        return F.sigmoid(x1) * x2
+# class SwiGLU(nn.Module):
+#     def forward(self, x):
+#         x1, x2 = x.chunk(2, dim=-1)
+#         return F.sigmoid(x1) * x2
 
 
 class RoformerLayer(nn.Module):
@@ -208,149 +210,147 @@ class BalmLMHead(nn.Module):
 # -----------------------
 
 
-class Router(nn.Module):
-    """
-    Default router for Sparse Transformer models.
+# class Top1Router(nn.Module):
+#     """
+#     This router uses the "token choice of top-1 experts" strategy introduced in the
+#     `Switch Transformers`_ paper. Tokens are routed to their expert of choice until the
+#     expert's `expert_capacity` is reached.
 
-    This router uses the "token choice of top-1 experts" strategy introduced in the
-    `Switch Transformers`_ paper. Tokens are routed to their expert of choice until the
-    expert's `expert_capacity` is reached.
+#     .. note::
+#         There is no guarantee that each token will be processed by an expert,
+#         or that every expert will receive at least one token.
 
-    .. note::
-        There is no guarantee that each token will be processed by an expert,
-        or that every expert will receive at least one token.
-
-    If tokens are routed to an expert which is above capacity, they are not processed by any expert
-    and their hidden states are passed to the subsequent layer unchanged.
+#     If tokens are routed to an expert which is above capacity, they are not processed by any expert
+#     and their hidden states are passed to the subsequent layer unchanged.
 
 
-    Parameters:
-    -----------
-    embed_dim : int
-        Embedding dimension.
+#     Parameters:
+#     -----------
+#     embed_dim : int
+#         Embedding dimension.
 
-    num_experts : int
-        Number of experts.
+#     num_experts : int
+#         Number of experts.
 
-    expert_capacity : int
-        Maximum number of tokens that can be routed to each expert.
+#     expert_capacity : int
+#         Maximum number of tokens that can be routed to each expert.
 
-    dtype : str, optional
-        Data type to use for router probabilities. The default is "float32".
+#     dtype : str, optional
+#         Data type to use for router probabilities. The default is "float32".
 
-    bias : bool, optional
-        Whether to add bias to the router classifier. The default is ``False``.
+#     bias : bool, optional
+#         Whether to add bias to the router classifier. The default is ``False``.
 
-    jitter : float, optional
-        Amount of jitter to add to the router probabilities. The default is ``0.0``.
+#     jitter : float, optional
+#         Amount of jitter to add to the router probabilities. The default is ``0.0``.
 
-    ignore_padding_tokens : bool, optional
-        Whether to ignore padding tokens when computing router probabilities.
-        The default is ``True``.
+#     ignore_padding_tokens : bool, optional
+#         Whether to ignore padding tokens when computing router probabilities.
+#         The default is ``True``.
 
 
-    .. _Switch Transformers:
-        https://arxiv.org/abs/2101.03961
-    """
+#     .. _Switch Transformers:
+#         https://arxiv.org/abs/2101.03961
+#     """
 
-    def __init__(
-        self,
-        embed_dim: int,
-        num_experts: int,
-        expert_capacity: int,
-        dtype: str = "float32",
-        bias: bool = False,
-        jitter: float = 0.0,
-        ignore_padding_tokens: bool = True,
-    ):
-        super().__init__()
-        self.num_experts = num_experts
-        self.expert_capacity = expert_capacity
-        self.dtype = getattr(torch, dtype)
-        self.classifier = nn.Linear(
-            embed_dim,
-            self.num_experts,
-            bias=bias,
-            dtype=self.dtype,
-        )
-        self.jitter = jitter
-        self.ignore_padding_tokens = ignore_padding_tokens
+#     def __init__(
+#         self,
+#         embed_dim: int,
+#         num_experts: int,
+#         expert_capacity: int,
+#         dtype: str = "float32",
+#         bias: bool = False,
+#         jitter: float = 0.0,
+#         ignore_padding_tokens: bool = True,
+#     ):
+#         super().__init__()
+#         self.num_experts = num_experts
+#         self.expert_capacity = expert_capacity
+#         self.dtype = getattr(torch, dtype)
+#         self.classifier = nn.Linear(
+#             embed_dim,
+#             self.num_experts,
+#             bias=bias,
+#             dtype=self.dtype,
+#         )
+#         self.jitter = jitter
+#         self.ignore_padding_tokens = ignore_padding_tokens
 
-    def _compute_router_probabilities(
-        self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Computes router probabilities from input hidden states.
+#     def _compute_router_probabilities(
+#         self, x: torch.Tensor
+#     ) -> Tuple[torch.Tensor, torch.Tensor]:
+#         """
+#         Computes router probabilities from input hidden states.
 
-        Parameters:
-        -----------
-        x : torch.Tensor
-            Tensor of shape (batch_size, sequence_length, hidden_dim) from which
-            router probabilities are computed.
+#         Parameters:
+#         -----------
+#         x : torch.Tensor
+#             Tensor of shape (batch_size, sequence_length, hidden_dim) from which
+#             router probabilities are computed.
 
-        Returns:
-        --------
-        router_probabilities : torch.Tensor
-            Tensor of shape (batch_size, sequence_length, num_experts) corresponding to
-            the probabilities for each token and expert. Used for routing tokens to experts.
+#         Returns:
+#         --------
+#         router_probabilities : torch.Tensor
+#             Tensor of shape (batch_size, sequence_length, num_experts) corresponding to
+#             the probabilities for each token and expert. Used for routing tokens to experts.
 
-        router_logits : torch.Tensor
-            Logits tensor of shape (batch_size, sequence_length, num_experts) corresponding
-            to raw router logits. This is used for computing router z-loss.
-        """
-        # float32 is used to ensure stability. See the discussion of "selective precision" in
-        # https://arxiv.org/abs/2101.03961.
-        # we also store the input dtype so we can cast the output back to the original dtype
-        self.input_dtype = x.dtype
-        x = x.to(self.dtype)
-        if self.jitter > 0:
-            x *= torch.empty_like(x).uniform_(1.0 - self.jitter, 1.0 + self.jitter)
+#         router_logits : torch.Tensor
+#             Logits tensor of shape (batch_size, sequence_length, num_experts) corresponding
+#             to raw router logits. This is used for computing router z-loss.
+#         """
+#         # float32 is used to ensure stability. See the discussion of "selective precision" in
+#         # https://arxiv.org/abs/2101.03961.
+#         # we also store the input dtype so we can cast the output back to the original dtype
+#         self.input_dtype = x.dtype
+#         x = x.to(self.dtype)
+#         if self.jitter > 0:
+#             x *= torch.empty_like(x).uniform_(1.0 - self.jitter, 1.0 + self.jitter)
 
-        # shape: [batch_size, sequence_length, num_experts]
-        logits = self.classifier(x)
+#         # shape: [batch_size, sequence_length, num_experts]
+#         logits = self.classifier(x)
 
-        # apply softmax and cast back to the original dtype
-        probabilities = F.softmax(logits, dim=-1, dtype=self.dtype).to(self.input_dtype)
-        return probabilities, logits
+#         # apply softmax and cast back to the original dtype
+#         probabilities = F.softmax(logits, dim=-1, dtype=self.dtype).to(self.input_dtype)
+#         return probabilities, logits
 
-    def forward(
-        self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Route tokens to experts.
+#     def forward(
+#         self, x: torch.Tensor
+#     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+#         """
+#         Route tokens to experts.
 
-        Parameters:
-        -----------
-        x : torch.Tensor
-            Input tensor of shape (batch_size, sequence_length, embed_dim).
+#         Parameters:
+#         -----------
+#         x : torch.Tensor
+#             Input tensor of shape (batch_size, sequence_length, embed_dim).
 
-        Returns:
-        --------
-        expert_indices : torch.Tensor
-            Tensor of shape (batch_size, sequence_length, num_experts) indicating
-            which expert the token should be routed to.
+#         Returns:
+#         --------
+#         expert_indices : torch.Tensor
+#             Tensor of shape (batch_size, sequence_length, num_experts) indicating
+#             which expert the token should be routed to.
 
-        router_probabilities : torch.Tensor
-            Tensor of shape (batch_size, sequence_length, num_experts) containing
-            the router probabilities.
+#         router_probabilities : torch.Tensor
+#             Tensor of shape (batch_size, sequence_length, num_experts) containing
+#             the router probabilities.
 
-        router_logits : torch.Tensor
-            Tensor of shape (batch_size, sequence_length, num_experts) containing
-            the router logits.
-        """
-        router_probs, router_logits = self._compute_router_probabilities(x)
-        expert_indices = torch.argmax(router_probs, dim=-1)
-        expert_indices = F.one_hot(expert_indices, num_classes=self.num_experts)
+#         router_logits : torch.Tensor
+#             Tensor of shape (batch_size, sequence_length, num_experts) containing
+#             the router logits.
+#         """
+#         router_probs, router_logits = self._compute_router_probabilities(x)
+#         expert_indices = torch.argmax(router_probs, dim=-1)
+#         expert_indices = F.one_hot(expert_indices, num_classes=self.num_experts)
 
-        # mask tokens if their desired expert is above capacity
-        token_priority = torch.cumsum(expert_indices, dim=-2)
-        expert_capacity_mask = token_priority <= self.expert_capacity
-        expert_indices = expert_indices * expert_capacity_mask
+#         # mask tokens if their desired expert is above capacity
+#         token_priority = torch.cumsum(expert_indices, dim=-2)
+#         expert_capacity_mask = token_priority <= self.expert_capacity
+#         expert_indices = expert_indices * expert_capacity_mask
 
-        # get the probability of the top-choice expert for each token
-        router_probs = torch.max(router_probs, dim=-1).values.unsqueeze(-1)
+#         # get the probability of the top-choice expert for each token
+#         router_probs = torch.max(router_probs, dim=-1).values.unsqueeze(-1)
 
-        return expert_indices, router_probs, router_logits
+#         return expert_indices, router_probs, router_logits
 
 
 class Expert(nn.Module):
@@ -445,7 +445,7 @@ class SparseMLP(nn.Module):
         router_bias: bool = False,
         router_jitter: float = 0.0,
         router_ignore_padding_tokens: bool = True,
-        router_class: nn.Module = Router,
+        router_class: nn.Module = TopKRouter,
         expert_class: nn.Module = Expert,
     ):
         super().__init__()
@@ -532,7 +532,7 @@ class SparseTransformerLayer(nn.Module):
         router_bias: bool = False,
         router_jitter: float = 0.0,
         router_ignore_padding_tokens: bool = True,
-        router_class: nn.Module = Router,
+        router_class: nn.Module = TopKRouter,
         expert_class: nn.Module = Expert,
         # config: BalmMoEConfig,
     ):
@@ -677,8 +677,8 @@ class SparseRoformerLayer(nn.Module):
         router_bias: bool = False,
         router_jitter: float = 0.0,
         router_ignore_padding_tokens: bool = True,
-        router_class: nn.Module = "Router",
-        expert_class: nn.Module = "Expert",
+        router_class: nn.Module = TopKRouter,
+        expert_class: nn.Module = Expert,
     ):
         super().__init__()
         self.rotary_embedding = RotaryPositionalEmbeddings(embed_dim, max_len)
