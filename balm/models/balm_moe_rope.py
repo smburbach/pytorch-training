@@ -28,7 +28,8 @@ import torch.nn as nn
 
 # from ..embedding import RelativePositionalEmbedding, RotaryPositionalEmbeddings
 from ..loss import router_load_balancing_loss, router_z_loss
-from ..modules import BalmLMHead, Expert, MaskedLMOutput, Router, SparseRoformerLayer
+from ..modules import BalmLMHead, Expert, MaskedLMOutput, SparseRoformerLayer
+from ..router import TopKRouter
 
 
 class BalmMoERoPE(nn.Module):
@@ -59,7 +60,7 @@ class BalmMoERoPE(nn.Module):
         router_ignore_padding_tokens: bool = True,
         position_embedding_type: str = "relative_key_query",
         padding_idx: int = 0,
-        router_class: nn.Module = Router,
+        router_class: nn.Module = TopKRouter,
         expert_class: nn.Module = Expert,
         # config: BalmMoEConfig,
     ):
@@ -236,7 +237,7 @@ class BalmMoERoPEForMaskedLM(nn.Module):
         router_aux_loss_coef: float = 0.001,
         position_embedding_type: str = "relative_key_query",
         padding_idx: int = 0,
-        router_class: nn.Module = Router,
+        router_class: nn.Module = TopKRouter,
         expert_class: nn.Module = Expert,
     ):
         super().__init__()

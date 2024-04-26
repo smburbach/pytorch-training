@@ -28,7 +28,15 @@ import torch.nn as nn
 
 from ..embedding import RelativePositionalEmbedding
 from ..loss import router_load_balancing_loss, router_z_loss
-from ..modules import BalmLMHead, Expert, MaskedLMOutput, Router, SparseTransformerLayer
+from ..modules import (
+    BalmLMHead,
+    Expert,
+    MaskedLMOutput,
+    SparseTransformerLayer,
+)
+
+# Top1Router,
+from ..router import TopKRouter
 
 
 class BalmMoE(nn.Module):
@@ -57,7 +65,7 @@ class BalmMoE(nn.Module):
         router_jitter: float = 0.0,
         router_ignore_padding_tokens: bool = True,
         padding_idx: int = 0,
-        router_class: nn.Module = Router,
+        router_class: nn.Module = TopKRouter,
         expert_class: nn.Module = Expert,
         # config: BalmMoEConfig,
     ):
@@ -234,7 +242,7 @@ class BalmMoEForMaskedLM(nn.Module):
         router_z_loss_coef: float = 0.001,
         router_aux_loss_coef: float = 0.001,
         padding_idx: int = 0,
-        router_class: nn.Module = Router,
+        router_class: nn.Module = TopKRouter,
         expert_class: nn.Module = Expert,
     ):
         super().__init__()
