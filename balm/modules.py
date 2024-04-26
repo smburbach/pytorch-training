@@ -439,6 +439,7 @@ class SparseMLP(nn.Module):
         ffn_dim: int,
         num_experts: int,
         expert_capacity: int,
+        top_k: int = 1,
         expert_activation: str = "gelu",
         expert_ffn_dropout: float = 0.0,
         router_dtype: str = "float32",
@@ -453,6 +454,7 @@ class SparseMLP(nn.Module):
             embed_dim=embed_dim,
             num_experts=num_experts,
             expert_capacity=expert_capacity,
+            top_k=top_k,
             dtype=router_dtype,
             bias=router_bias,
             jitter=router_jitter,
@@ -480,24 +482,24 @@ class SparseMLP(nn.Module):
         --------
         x : torch.Tensor
             Output tensor of shape (batch_size, sequence_length, embed_dim).
-
         """
         # get the router mask, probabilities, and logits
-        # mask shape: [batch_size, sequence_length, num_experts]
-        router_mask, router_probs, router_logits = self.router(x)
-        expert_index = torch.argmax(router_mask, dim=-1)
+        expert_mask, router_probs, router_logits = self.router(x)
+        expert_outputs = []
 
-        # The router might not always map all the tokens to a n expert, since
-        # the top-choice expert might be above capacity. The hidden states of those tokens
-        # will be unchanged from one layer to another. That is why the hidden states are
-        # cloned before updating only the tokens that have been successfully routed to an expert.
-        next_states = x.clone()
-        for idx, expert in enumerate(self.experts.values()):
-            token_indices = router_mask[:, :, idx].bool()
-            next_states[token_indices] = expert(x[token_indices]).to(next_states.dtype)
+        for idx, expert in self.experts.items():
+            int_idx = int(idx.split("_")[-1])
+            token_indices = expert_mask[..., int_idx].bool()
+            expert_output = expert(x[token_indices]).to(x.dtype)
+            expanded_output = torch.zeros_like(x)
+            expanded_output[token_indices] = expert_output
+            expert_outputs.append(expanded_output)
 
-        x = router_probs * next_states
-        return x, (router_logits, expert_index)
+        # Combine the outputs from the selected tokens for each expert
+        x = torch.stack(expert_outputs, dim=-1) * expert_mask.unsqueeze(-2)
+        x = x.sum(dim=-1)
+
+        return x, (router_logits, expert_mask)
 
 
 class SparseTransformerLayer(nn.Module):
