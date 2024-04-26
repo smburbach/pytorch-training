@@ -35,9 +35,11 @@ from .loss import router_load_balancing_loss, router_z_loss
 
 class TopKRouter(nn.Module):
     """
-    This router uses the "token choice of top-k experts" strategy introduced in the
-    `Switch Transformers`_ paper. Tokens are routed to their expert of choice until the
-    expert's `expert_capacity` is reached.
+    This router uses the "token choice of top-k experts" strategy. For example, if k=1, this
+    replicates the top-1 routing strategy introduced in the `Switch Transformers`_ paper.
+    Alternatively, if k=2, this replicates the top-2 routing strategy introduced in the `GShard`_
+    paper. Tokens are routed to their expert of choice until the expert's `expert_capacity` is
+    reached.
 
     .. note::
         There is no guarantee that each token will be processed by an expert,
@@ -74,6 +76,9 @@ class TopKRouter(nn.Module):
 
     .. _Switch Transformers:
         https://arxiv.org/abs/2101.03961
+
+    .. _GShard:
+        https://arxiv.org/abs/2006.16668
     """
 
     def __init__(
