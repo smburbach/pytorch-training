@@ -40,6 +40,7 @@ class MaskedLMOutput:
         hidden_states: Optional[torch.Tensor] = None,
         attentions: Optional[torch.Tensor] = None,
         last_hidden_state: Optional[torch.Tensor] = None,
+        lm_loss: Optional[torch.Tensor] = None,
         router_logits: Optional[torch.Tensor] = None,
         router_z_loss: Optional[torch.Tensor] = None,
         router_aux_loss: Optional[torch.Tensor] = None,
@@ -50,6 +51,7 @@ class MaskedLMOutput:
         self.hidden_states = hidden_states
         self.attentions = attentions
         self.last_hidden_state = last_hidden_state
+        self.lm_loss = lm_loss
         self.router_logits = router_logits
         self.router_z_loss = router_z_loss
         self.router_aux_loss = router_aux_loss
