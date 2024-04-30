@@ -350,14 +350,33 @@ class Tokenizer(TokenizerBase):
             encoded = [self._encode(text, **all_kwargs)]
         # batched inputs
         else:
+            # n_procs = min(len(text), mp.cpu_count())
+            # with ProcessPoolExecutor(max_workers=n_procs) as executor:
+            #     futures = [
+            #         executor.submit(self._encode, txt, **all_kwargs) for txt in text
+            #     ]
+            #     encoded = []
+            #     for future in tqdm(as_completed(futures), total=len(futures)):
+            #         encoded.append(future.result())
             n_procs = min(len(text), mp.cpu_count())
+            # Initialize tqdm progress bar here
+            progress_bar = tqdm(
+                total=len(text),
+                desc="Encoding",
+                # unit="text",
+            )
             with ProcessPoolExecutor(max_workers=n_procs) as executor:
-                futures = [
-                    executor.submit(self._encode, txt, **all_kwargs) for txt in text
-                ]
+                futures = {
+                    executor.submit(self._encode, txt, **all_kwargs): txt
+                    for txt in text
+                }
                 encoded = []
-                for future in tqdm(as_completed(futures), total=len(futures)):
-                    encoded.append(future.result())
+                for future in as_completed(futures):
+                    result = future.result()
+                    encoded.append(result)
+                    # Update the progress bar each time a future is completed
+                    progress_bar.update(1)
+            progress_bar.close()
             # encoded = [f.result() for f in as_completed(futures)]
         encoded = [torch.tensor(e) for e in encoded]
         results_dict = {
