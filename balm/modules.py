@@ -89,7 +89,7 @@ class TransformerLayer(nn.Module):
         num_heads: int,
         dropout: float = 0.0,
         attention_dropout: float = 0.0,
-        attention_batch_first: bool = True,
+        # attention_batch_first: bool = True,
         layer_norm_eps: float = 1e-5,
         activation: str = "gelu",
     ):
@@ -121,7 +121,7 @@ class TransformerLayer(nn.Module):
             embed_dim=embed_dim,
             num_heads=num_heads,
             dropout=attention_dropout,
-            batch_first=attention_batch_first,
+            batch_first=True,
         )
 
         self.feed_forward = nn.Sequential(
@@ -178,7 +178,7 @@ class RoformerLayer(nn.Module):
         max_len: int,
         dropout: float = 0.0,
         attention_dropout: float = 0.0,
-        attention_batch_first: bool = True,
+        # attention_batch_first: bool = True,
         layer_norm_eps: float = 1e-5,
     ):
         """
@@ -210,7 +210,7 @@ class RoformerLayer(nn.Module):
             embed_dim=embed_dim,
             num_heads=num_heads,
             dropout=attention_dropout,
-            batch_first=attention_batch_first,
+            batch_first=True,
         )
 
         self.feed_forward = nn.Sequential(
@@ -463,7 +463,7 @@ class SparseTransformerLayer(nn.Module):
         expert_ffn_dropout: float = 0.0,
         ffn_dropout: float = 0.0,
         attention_dropout: float = 0.0,
-        attention_batch_first: bool = True,
+        # attention_batch_first: bool = True,
         layer_norm_eps: float = 1e-5,
         router_dtype: str = "float32",
         router_bias: bool = False,
@@ -493,7 +493,7 @@ class SparseTransformerLayer(nn.Module):
             embed_dim=self.embed_dim,
             num_heads=self.num_heads,
             dropout=self.attention_dropout,
-            batch_first=attention_batch_first,
+            batch_first=True,
         )
 
         self.mlp = SparseMLP(
@@ -614,7 +614,7 @@ class HybridSparseTransformerLayer(nn.Module):
         ffn_dropout: float = 0.0,
         attention_dropout: float = 0.0,
         expert_ffn_dropout: float = 0.0,
-        attention_batch_first: bool = True,
+        # attention_batch_first: bool = True,
         layer_norm_eps: float = 1e-5,
         router_dtype: str = "float32",
         router_bias: bool = False,
@@ -631,7 +631,7 @@ class HybridSparseTransformerLayer(nn.Module):
             num_heads=num_heads,
             dropout=ffn_dropout,
             attention_dropout=attention_dropout,
-            attention_batch_first=attention_batch_first,
+            # attention_batch_first=attention_batch_first,
             layer_norm_eps=layer_norm_eps,
             activation=activation,
         )
@@ -738,7 +738,7 @@ class SparseRoformerLayer(nn.Module):
         expert_ffn_dropout: float = 0.0,
         ffn_dropout: float = 0.0,
         attention_dropout: float = 0.0,
-        attention_batch_first: bool = True,
+        # attention_batch_first: bool = True,
         layer_norm_eps: float = 1e-5,
         router_dtype: str = "float32",
         router_bias: bool = False,
@@ -756,7 +756,7 @@ class SparseRoformerLayer(nn.Module):
             embed_dim=embed_dim,
             num_heads=num_heads,
             dropout=attention_dropout,
-            # batch_first=attention_batch_first,
+            batch_first=True,
         )
 
         self.mlp = SparseMLP(
