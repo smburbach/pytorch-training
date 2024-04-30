@@ -198,7 +198,7 @@ class Trainer:
                     attention_mask=inputs.get("attention_mask", None),
                     key_padding_mask=inputs.get("key_padding_mask", None),
                 )
-                loss = outputs.loss
+                loss = outputs["loss"]
                 loss.backward()
                 self.optimizer.step()
                 self.scheduler.step()
@@ -278,7 +278,7 @@ class Trainer:
                     attention_mask=inputs.get("attention_mask", None),
                     key_padding_mask=inputs.get("key_padding_mask", None),
                 )
-                tmp_eval_loss = outputs.loss
+                tmp_eval_loss = outputs["loss"]
                 eval_loss += tmp_eval_loss.mean().item()
                 num_eval_steps += 1
                 eval_pbar.update(1)
@@ -370,7 +370,7 @@ class Trainer:
     @staticmethod
     def print_loss(
         steps: int,
-        outputs: MaskedLMOutput,
+        outputs: Union[MaskedLMOutput, dict],
         lr: float,
         num_train_steps: Optional[int] = None,
     ):
@@ -379,12 +379,12 @@ class Trainer:
             spaces = " " * (total_spaces - len(str(steps)))
         else:
             spaces = ""
-        log_str = f"step {steps}{spaces} | loss: {outputs.loss.item():0.4f}"
-        if outputs.lm_loss is not None:
-            log_str += f" | lm_loss: {outputs.lm_loss.item():0.4f}"
-        if outputs.router_z_loss is not None:
-            log_str += f" | router_z_loss: {outputs.router_z_loss.item():0.4f}"
-        if outputs.router_aux_loss is not None:
-            log_str += f" | router_aux_loss: {outputs.router_aux_loss.item():0.4f}"
+        log_str = f"step {steps}{spaces} | loss: {outputs['loss'].item():0.4f}"
+        if outputs["lm_loss"] is not None:
+            log_str += f" | lm_loss: {outputs['lm_loss'].item():0.4f}"
+        if outputs["router_z_loss"] is not None:
+            log_str += f" | router_z_loss: {outputs['router_z_loss'].item():0.4f}"
+        if outputs["router_aux_loss"] is not None:
+            log_str += f" | router_aux_loss: {outputs['router_aux_loss'].item():0.4f}"
         log_str += f" | lr: {lr:0.6f}"
         print(log_str)
