@@ -361,5 +361,5 @@ class BalmHybridMoEForMaskedLM(nn.Module):
             outputs["loss"] = loss
 
         if return_dict:
-            return outputs
+            return outputs.as_dict()
         return outputs.as_tuple()
