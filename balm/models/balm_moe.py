@@ -33,6 +33,7 @@ from ..modules import (
     Expert,
     MaskedLMOutput,
     SparseTransformerLayer,
+    TransformerLayer,
 )
 from ..router import TopKRouter
 
@@ -52,13 +53,16 @@ class BalmMoEModel(nn.Module):
         expert_capacity: int,
         vocab_size: int,
         max_length: int = 320,
+        num_shared_experts: int = 0,
         expert_activation: str = "gelu",
         expert_ffn_dropout: float = 0.0,
+        alternate_sparsity: bool = False,
         token_embedding_dropout: float = 0.0,
         attention_dropout: float = 0.0,
         attention_batch_first: bool = True,
         layer_norm_eps: float = 1e-5,
         router_dtype: str = "float32",
+        router_top_k: int = 1,
         router_bias: bool = False,
         router_jitter: float = 0.0,
         router_ignore_padding_tokens: bool = True,
@@ -68,31 +72,74 @@ class BalmMoEModel(nn.Module):
         # config: BalmMoEConfig,
     ):
         super().__init__()
+        self.alternate_sparsity = alternate_sparsity
         self.embed_tokens = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
         self.embed_positions = RelativePositionalEmbedding(embed_dim)
-        self.layers = nn.ModuleList(
-            [
-                SparseTransformerLayer(
-                    embed_dim=embed_dim,
-                    ffn_dim=ffn_dim,
-                    num_heads=num_heads,
-                    num_experts=num_experts,
-                    expert_capacity=expert_capacity,
-                    expert_activation=expert_activation,
-                    expert_ffn_dropout=expert_ffn_dropout,
-                    attention_dropout=attention_dropout,
-                    attention_batch_first=attention_batch_first,
-                    layer_norm_eps=layer_norm_eps,
-                    router_dtype=router_dtype,
-                    router_bias=router_bias,
-                    router_jitter=router_jitter,
-                    router_ignore_padding_tokens=router_ignore_padding_tokens,
-                    router_class=router_class,
-                    expert_class=expert_class,
-                )
-                for _ in range(num_layers)
-            ]
-        )
+
+        if self.alternate_sparsity:
+            layers = []
+            for layer_num in range(num_layers):
+                if layer_num % 2 == 0:
+                    layers.append(
+                        TransformerLayer(
+                            embed_dim=embed_dim,
+                            ffn_dim=ffn_dim,
+                            num_heads=num_heads,
+                            attention_dropout=attention_dropout,
+                            attention_batch_first=attention_batch_first,
+                            layer_norm_eps=layer_norm_eps,
+                            activation=expert_activation,
+                        )
+                    )
+                else:
+                    layers.append(
+                        SparseTransformerLayer(
+                            embed_dim=embed_dim,
+                            ffn_dim=ffn_dim,
+                            num_heads=num_heads,
+                            num_experts=num_experts,
+                            num_shared_experts=num_shared_experts,
+                            top_k=router_top_k,
+                            expert_capacity=expert_capacity,
+                            expert_activation=expert_activation,
+                            expert_ffn_dropout=expert_ffn_dropout,
+                            attention_dropout=attention_dropout,
+                            attention_batch_first=attention_batch_first,
+                            layer_norm_eps=layer_norm_eps,
+                            router_dtype=router_dtype,
+                            router_bias=router_bias,
+                            router_jitter=router_jitter,
+                            router_ignore_padding_tokens=router_ignore_padding_tokens,
+                            router_class=router_class,
+                            expert_class=expert_class,
+                        )
+                    )
+            self.layers = nn.ModuleList(layers)
+
+        else:
+            self.layers = nn.ModuleList(
+                [
+                    SparseTransformerLayer(
+                        embed_dim=embed_dim,
+                        ffn_dim=ffn_dim,
+                        num_heads=num_heads,
+                        num_experts=num_experts,
+                        expert_capacity=expert_capacity,
+                        expert_activation=expert_activation,
+                        expert_ffn_dropout=expert_ffn_dropout,
+                        attention_dropout=attention_dropout,
+                        attention_batch_first=attention_batch_first,
+                        layer_norm_eps=layer_norm_eps,
+                        router_dtype=router_dtype,
+                        router_bias=router_bias,
+                        router_jitter=router_jitter,
+                        router_ignore_padding_tokens=router_ignore_padding_tokens,
+                        router_class=router_class,
+                        expert_class=expert_class,
+                    )
+                    for _ in range(num_layers)
+                ]
+            )
         self.embedding_dropout = nn.Dropout(token_embedding_dropout)
         self.final_norm = nn.LayerNorm(embed_dim)
 
@@ -164,27 +211,38 @@ class BalmMoEModel(nn.Module):
         x = self.embedding_dropout(x)
 
         # encoder
-        # x = x.transpose(0, 1)
         for layer_idx, layer in enumerate(self.layers, 1):
-            x = layer(
-                x,
-                attention_mask=attention_mask,
-                key_padding_mask=key_padding_mask,
-                need_weights=output_attentions,
-                output_router_logits=output_router_logits,
-            )
-            if output_attentions:
-                x, attn, router_tuple = x
-                attn_weights.append(attn)
+            if layer_idx % 2 == 0 or not self.alternate_sparsity:
+                # sparse layer, so we need to collect router/expert info
+                x = layer(
+                    x,
+                    attention_mask=attention_mask,
+                    key_padding_mask=key_padding_mask,
+                    need_weights=output_attentions,
+                    output_router_logits=output_router_logits,
+                )
+                if output_attentions:
+                    x, attn, router_tuple = x
+                    attn_weights.append(attn)
+                else:
+                    x, router_tuple = x
+                router_logits.append(router_tuple[0])
+                expert_indexes.append(router_tuple[1])
+                if output_hidden_states:
+                    hidden_states[layer_idx] = x
             else:
-                x, router_tuple = x
-            router_logits.append(router_tuple[0])
-            expert_indexes.append(router_tuple[1])
-            if output_hidden_states:
-                # hidden_states[layer_idx] = x.transpose(0, 1)
-                hidden_states[layer_idx] = x
+                # dense layer, no router info needed
+                x = layer(
+                    x,
+                    attention_mask=attention_mask,
+                    need_weights=output_attentions,
+                )
+                if output_attentions:
+                    x, attn = x
+                    attn_weights.append(attn)
+                if output_hidden_states:
+                    hidden_states[layer_idx] = x
         x = self.final_norm(x)
-        # x = x.transpose(0, 1)
 
         # Compute the router losses (z_loss + auxiliary loss)
         cat_router_logits = torch.cat(router_logits, dim=1)
@@ -230,13 +288,16 @@ class BalmMoEForMaskedLM(nn.Module):
         expert_capacity: int,
         vocab_size: int,
         max_length: int = 320,
+        num_shared_experts: int = 0,
         expert_activation: str = "gelu",
         expert_ffn_dropout: float = 0.0,
+        alternate_sparsity: bool = False,
         token_embedding_dropout: float = 0.0,
         attention_dropout: float = 0.0,
         attention_batch_first: bool = True,
         layer_norm_eps: float = 1e-5,
         router_dtype: str = "float32",
+        router_top_k: int = 1,
         router_bias: bool = False,
         router_jitter: float = 0.0,
         router_ignore_padding_tokens: bool = True,
@@ -256,6 +317,8 @@ class BalmMoEForMaskedLM(nn.Module):
             expert_capacity=expert_capacity,
             vocab_size=vocab_size,
             max_length=max_length,
+            num_shared_experts=num_shared_experts,
+            alternate_sparsity=alternate_sparsity,
             expert_activation=expert_activation,
             expert_ffn_dropout=expert_ffn_dropout,
             token_embedding_dropout=token_embedding_dropout,
@@ -263,6 +326,7 @@ class BalmMoEForMaskedLM(nn.Module):
             attention_batch_first=attention_batch_first,
             layer_norm_eps=layer_norm_eps,
             router_dtype=router_dtype,
+            router_top_k=router_top_k,
             router_bias=router_bias,
             router_jitter=router_jitter,
             router_ignore_padding_tokens=router_ignore_padding_tokens,
