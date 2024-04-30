@@ -75,6 +75,9 @@ class MaskedLMOutput:
         ]
         return tuple([o for o in output_attrs if o is not None])
 
+    def as_dict(self):
+        return {k: v for k, v in self.__dict__.items() if v is not None}
+
 
 class TransformerLayer(nn.Module):
     def __init__(
@@ -583,6 +586,134 @@ class SparseTransformerLayer(nn.Module):
             return (x, router_tuple)
         if need_weights:
             return (x, attn)
+        return x
+
+
+class HybridSparseTransformerLayer(nn.Module):
+    """
+    Hybrid sparse transformer layer. Inspired by Snowflake's `Arctic model`_.
+
+    .. _Arctic model:
+        https://www.snowflake.com/blog/arctic-open-efficient-foundation-language-models-snowflake/
+    """
+
+    def __init__(
+        self,
+        embed_dim: int,
+        ffn_dim: int,
+        residual_ffn_dim: int,
+        num_heads: int,
+        num_experts: int,
+        expert_capacity: int,
+        num_shared_experts: int = 0,
+        top_k: int = 2,
+        activation: str = "gelu",
+        expert_activation: str = "gelu",
+        ffn_dropout: float = 0.0,
+        attention_dropout: float = 0.0,
+        expert_ffn_dropout: float = 0.0,
+        attention_batch_first: bool = True,
+        layer_norm_eps: float = 1e-5,
+        router_dtype: str = "float32",
+        router_bias: bool = False,
+        router_jitter: float = 0.0,
+        router_ignore_padding_tokens: bool = True,
+        router_class: nn.Module = TopKRouter,
+        expert_class: nn.Module = Expert,
+        # config: BalmMoEConfig,
+    ):
+        super().__init__()
+        self.dense_transformer = TransformerLayer(
+            embed_dim=embed_dim,
+            ffn_dim=ffn_dim,
+            num_heads=num_heads,
+            dropout=ffn_dropout,
+            attention_dropout=attention_dropout,
+            attention_batch_first=attention_batch_first,
+            layer_norm_eps=layer_norm_eps,
+            activation=activation,
+        )
+        self.sparse_residual = SparseMLP(
+            embed_dim=embed_dim,
+            ffn_dim=residual_ffn_dim,
+            num_experts=num_experts,
+            expert_capacity=expert_capacity,
+            num_shared_experts=num_shared_experts,
+            top_k=top_k,
+            expert_activation=expert_activation,
+            expert_ffn_dropout=expert_ffn_dropout,
+            router_dtype=router_dtype,
+            router_bias=router_bias,
+            router_jitter=router_jitter,
+            router_ignore_padding_tokens=router_ignore_padding_tokens,
+            router_class=router_class,
+            expert_class=expert_class,
+        )
+        self.residual_norm = nn.LayerNorm(embed_dim, eps=layer_norm_eps)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        need_weights: bool = False,
+        output_router_logits: bool = True,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Tuple]]:
+        """
+        Process the input hidden states.
+
+        Parameters:
+        -----------
+        x : torch.Tensor
+            Input tensor of shape (batch_size, sequence_length, embed_dim).
+
+        attn_mask : torch.Tensor, optional
+            Attention mask of shape (batch_size * num_heads, sequence_length, sequence_length). The default is None.
+
+        key_padding_mask : torch.Tensor, optional
+            Mask of shape (batch_size, sequence_length). The default is None.
+
+        need_weights : bool, optional
+            Whether to return attention weights. The default is False.
+
+            .. note::
+                if `need_weights` is ``True``, the output will be a tuple of (x, attn). Also,
+                nn.MultiHeadAttention will not be able to use the optimized torch implementation
+                of ``scaled_dot_product_attention``. See `here`_ for more details.
+
+        output_router_logits : bool, optional
+            Whether to output router logits. The default is True.
+
+        Returns:
+        --------
+        x : torch.Tensor or Tuple
+
+            Output tensor of shape (batch_size, sequence_length, embed_dim). If `need_weights`, is ``True``,
+            output is a tuple of (x, attn). If `output_router_logits` is ``True``, the output will be a tuple
+            of (x, router_logits) or (x, attn, router_logts) depending on the value of `need_weights`.
+
+
+        .. _here:
+            https://pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html#torch.nn.MultiheadAttention.forward
+        """
+        residual, (router_logits, expert_mask) = self.sparse_residual(
+            self.residual_norm(x)
+        )
+        x = self.dense_transformer(
+            x,
+            attention_mask=attention_mask,
+            key_padding_mask=key_padding_mask,
+            need_weights=need_weights,
+        )
+        if need_weights:
+            x, attn = x
+        x = x + residual
+        if need_weights:
+            if output_router_logits:
+                return (x, attn, router_logits)
+            return (x, attn)
+        if output_router_logits:
+            return (x, router_logits)
         return x
 
 
