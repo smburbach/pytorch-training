@@ -221,6 +221,7 @@ class BalmForMaskedLM(nn.Module):
         key_padding_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
+        return_dict: bool = True,
     ) -> MaskedLMOutput:
         """
         Parameters
@@ -259,7 +260,9 @@ class BalmForMaskedLM(nn.Module):
             output.attentions = attn
         if output_hidden_states:
             output.hidden_states = x
-        return output
+        if return_dict:
+            return output.as_dict()
+        return output.as_tuple()
 
 
 # from typing import Optional
