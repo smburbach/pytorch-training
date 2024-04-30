@@ -258,7 +258,7 @@ class Trainer:
 
         self.model.eval()  # Set the model to evaluation mode
         eval_loss = 0.0
-        num_eval_steps = 0
+        # num_eval_steps = 0
         all_logits = []
         all_preds = []
         all_labels = []
@@ -267,6 +267,7 @@ class Trainer:
             eval_pbar = tqdm(
                 total=num_eval_steps,
                 desc="Evaluating: ",
+                unit="step",
                 leave=False,
             )
             for batch in eval_dataloader:
@@ -280,7 +281,7 @@ class Trainer:
                 )
                 tmp_eval_loss = outputs["loss"]
                 eval_loss += tmp_eval_loss.mean().item()
-                num_eval_steps += 1
+                # num_eval_steps += 1
                 eval_pbar.update(1)
 
                 if "logits" in outputs:
@@ -307,7 +308,7 @@ class Trainer:
         eval_loss = eval_loss / num_eval_steps
         eval_output = EvalOutput(
             loss=eval_loss,
-            predictions=outputs.logits.argmax(dim=-1).cpu().numpy(),
+            predictions=outputs["logits"].argmax(dim=-1).cpu().numpy(),
             labels=batch["labels"].cpu().numpy(),
             metrics=metric_results,
             num_samples=len(eval_dataloader),
