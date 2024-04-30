@@ -29,6 +29,7 @@ from typing import Callable, Dict, Optional, Tuple, Union
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
@@ -346,7 +347,10 @@ class Trainer:
     def place_inputs(self, collated: Dict):
         for key, value in collated.items():
             if value is not None:
-                value = value.to(self.device)
+                try:
+                    value = value.to(self.device)
+                except AttributeError:
+                    value = torch.tensor(value).to(self.device)
         return collated
 
     @staticmethod
