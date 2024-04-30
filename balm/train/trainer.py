@@ -186,7 +186,7 @@ class Trainer:
         )
 
         completed_steps = 0
-        pbar = tqdm(total=self.num_train_steps)
+        pbar = tqdm(total=self.num_train_steps, unit="step", desc="Training")
         for epoch in range(self.num_epochs):
             for batch in self.train_dataloader:
                 self.optimizer.zero_grad()
@@ -283,9 +283,9 @@ class Trainer:
                 num_eval_steps += 1
                 eval_pbar.update(1)
 
-                if hasattr(outputs, "logits"):
-                    all_logits.append(outputs.logits.detach().cpu())
-                    all_preds.append(outputs.logits.argmax(dim=-1).detach().cpu())
+                if "logits" in outputs:
+                    all_logits.append(outputs["logits"].detach().cpu())
+                    all_preds.append(outputs["logits"].argmax(dim=-1).detach().cpu())
                 all_labels.append(batch["labels"].detach().cpu())
 
         eval_pbar.close()
@@ -380,11 +380,11 @@ class Trainer:
         else:
             spaces = ""
         log_str = f"step {steps}{spaces} | loss: {outputs['loss'].item():0.4f}"
-        if outputs["lm_loss"] is not None:
-            log_str += f" | lm_loss: {outputs['lm_loss'].item():0.4f}"
-        if outputs["router_z_loss"] is not None:
-            log_str += f" | router_z_loss: {outputs['router_z_loss'].item():0.4f}"
-        if outputs["router_aux_loss"] is not None:
-            log_str += f" | router_aux_loss: {outputs['router_aux_loss'].item():0.4f}"
+        if "lm_loss" in outputs:
+            log_str += f" | MLM loss: {outputs['lm_loss'].item():0.4f}"
+        if "router_z_loss" in outputs:
+            log_str += f" | router z-loss: {outputs['router_z_loss'].item():0.4f}"
+        if "router_aux_loss" in outputs:
+            log_str += f" | router aux loss: {outputs['router_aux_loss'].item():0.4f}"
         log_str += f" | lr: {lr:0.6f}"
         print(log_str)
