@@ -564,7 +564,7 @@ class SparseTransformerLayer(nn.Module):
         """
         # attention
         residual = x
-        x, _ = self.self_attn(
+        x = self.self_attn(
             query=x,
             key=x,
             value=x,
@@ -799,7 +799,7 @@ class SparseRoformerLayer(nn.Module):
         value_rot = self.rotary_embedding(value_norm)
 
         # attention
-        x, _ = self.attention(
+        x = self.attention(
             query_rot,
             key_rot,
             value_rot,
@@ -808,9 +808,9 @@ class SparseRoformerLayer(nn.Module):
             need_weights=need_weights,
         )
         # x = query + self.dropout(x)
-        x = query + x
         if need_weights:
             x, attn = x
+        x = query + x
 
         # pre-norm
         residual = x
