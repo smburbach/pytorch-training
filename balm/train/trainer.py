@@ -204,6 +204,9 @@ class Trainer:
                 self.optimizer.zero_grad()
                 collated = self.data_collator(batch)
                 inputs = self.place_inputs(collated)
+
+                # print("input_ids device: ", inputs["input_ids"].device)
+
                 outputs = self.model(
                     input_ids=inputs["input_ids"],
                     labels=inputs.get("labels", None),
@@ -358,13 +361,16 @@ class Trainer:
         return model, optimizer
 
     def place_inputs(self, collated: Dict):
+        placed_inputs = {}
         for key, value in collated.items():
-            if value is not None:
-                try:
-                    value = value.to(self.device)
-                except AttributeError:
-                    value = torch.tensor(value).to(self.device)
-        return collated
+            value = value.to(self.device)
+            placed_inputs[key] = value
+            # if value is not None:
+            #     try:
+            #         value = value.to(self.device)
+            #     except AttributeError:
+            #         value = torch.tensor(value).to(self.device)
+        return placed_inputs
 
     @staticmethod
     def set_seed(seed: int):
