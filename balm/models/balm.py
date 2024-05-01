@@ -91,7 +91,7 @@ class BalmModel(nn.Module):
                     max_length,
                     dropout=dropout,
                     attention_dropout=attention_dropout,
-                    attention_batch_first=True,
+                    # attention_batch_first=True,
                     layer_norm_eps=layer_norm_eps,
                 )
                 for _ in range(num_layers)

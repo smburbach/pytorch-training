@@ -23,6 +23,7 @@
 
 
 import math
+import os
 import random
 from functools import cached_property
 from typing import Callable, Dict, Optional, Tuple, Union
@@ -55,7 +56,7 @@ class Trainer:
         per_device_eval_batch_size: Optional[int] = None,
         epochs: Optional[int] = None,
         max_steps: Optional[int] = None,
-        logging_steps: Optional[int] = 100,
+        logging_steps: Optional[int] = None,
         eval_steps: Optional[int] = None,
         save_steps: Optional[int] = None,
         gradient_accumulation_steps: Optional[int] = 1,
@@ -70,6 +71,8 @@ class Trainer:
         use_cpu: bool = False,
         seed: Optional[int] = 42,
         compute_metrics: Optional[Callable[[EvalPrediction], Dict]] = None,
+        output_dir: Optional[str] = None,
+        logging_dir: Optional[str] = None,
         # callbacks: Optional[List[TrainerCallback]] = None,
     ):
         # if args is None:
@@ -106,6 +109,15 @@ class Trainer:
         self.deepspeed_config = deepspeed_config
         self.compute_metrics = compute_metrics
         self.use_cpu = use_cpu
+        # directories
+        self.output_dir = output_dir if output_dir is not None else "tmp_trainer"
+        os.makedirs(self.output_dir, exist_ok=True)
+        self.logging_dir = (
+            logging_dir
+            if logging_dir is not None
+            else os.path.join(self.output_dir, "log")
+        )
+        os.makedirs(self.logging_dir, exist_ok=True)
 
     @cached_property
     def device(self):

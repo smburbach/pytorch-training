@@ -61,7 +61,7 @@ class BalmHybridMoEModel(nn.Module):
         alternate_sparsity: bool = False,
         token_embedding_dropout: float = 0.0,
         attention_dropout: float = 0.0,
-        attention_batch_first: bool = True,
+        # attention_batch_first: bool = True,
         layer_norm_eps: float = 1e-5,
         router_dtype: str = "float32",
         router_top_k: int = 1,
@@ -90,7 +90,7 @@ class BalmHybridMoEModel(nn.Module):
                     expert_activation=expert_activation,
                     expert_ffn_dropout=expert_ffn_dropout,
                     attention_dropout=attention_dropout,
-                    attention_batch_first=attention_batch_first,
+                    # attention_batch_first=attention_batch_first,
                     layer_norm_eps=layer_norm_eps,
                     router_dtype=router_dtype,
                     router_bias=router_bias,
@@ -105,7 +105,7 @@ class BalmHybridMoEModel(nn.Module):
         self.embedding_dropout = nn.Dropout(token_embedding_dropout)
         self.final_norm = nn.LayerNorm(embed_dim)
 
-        self.attention_batch_first = attention_batch_first
+        # self.attention_batch_first = attention_batch_first
 
     @property
     def num_parameters(self):
@@ -254,7 +254,7 @@ class BalmHybridMoEForMaskedLM(nn.Module):
         alternate_sparsity: bool = False,
         token_embedding_dropout: float = 0.0,
         attention_dropout: float = 0.0,
-        attention_batch_first: bool = True,
+        # attention_batch_first: bool = True,
         layer_norm_eps: float = 1e-5,
         router_dtype: str = "float32",
         router_top_k: int = 1,
@@ -284,7 +284,7 @@ class BalmHybridMoEForMaskedLM(nn.Module):
             alternate_sparsity=alternate_sparsity,
             token_embedding_dropout=token_embedding_dropout,
             attention_dropout=attention_dropout,
-            attention_batch_first=attention_batch_first,
+            # attention_batch_first=attention_batch_first,
             layer_norm_eps=layer_norm_eps,
             router_dtype=router_dtype,
             router_bias=router_bias,
