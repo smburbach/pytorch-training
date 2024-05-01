@@ -213,9 +213,10 @@ class Trainer:
                     attention_mask=inputs.get("attention_mask", None),
                     key_padding_mask=inputs.get("key_padding_mask", None),
                 )
-                loss = outputs["loss"]
                 if self.device_count > 1:
-                    loss = loss.mean()
+                    outputs["raw_loss"] = outputs["loss"].clone()
+                    outputs["loss"] = outputs["loss"].mean()
+                loss = outputs["loss"]
                 loss.backward()
                 self.optimizer.step()
                 self.scheduler.step()
