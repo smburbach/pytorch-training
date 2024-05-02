@@ -144,7 +144,7 @@ class TransformerLayer(nn.Module):
         x = self.norm1(x)
 
         # attention
-        x, _ = self.attention(
+        x = self.attention(
             x,
             x,
             x,
@@ -154,6 +154,8 @@ class TransformerLayer(nn.Module):
         )
         if need_weights:
             x, weights = x
+        else:
+            x = x[0]
         x = residual + self.dropout(x)
 
         # pre-norm
@@ -241,7 +243,7 @@ class RoformerLayer(nn.Module):
         value_rot = self.rotary_embedding(value_norm)
 
         # attention
-        x, _ = self.attention(
+        x = self.attention(
             query_rot,
             key_rot,
             value_rot,
@@ -251,6 +253,8 @@ class RoformerLayer(nn.Module):
         )
         if need_weights:
             x, weights = x
+        else:
+            x = x[0]
         x = query + self.dropout(x)
 
         # pre-norm
@@ -574,6 +578,8 @@ class SparseTransformerLayer(nn.Module):
         )
         if need_weights:
             x, attn = x
+        else:
+            x = x[0]
         x = residual + x
         x = self.norm1(x)
 
@@ -709,6 +715,8 @@ class HybridSparseTransformerLayer(nn.Module):
         )
         if need_weights:
             x, attn = x
+        else:
+            x = x[0]
         x = x + residual
         if need_weights:
             if output_router_logits:
@@ -810,6 +818,8 @@ class SparseRoformerLayer(nn.Module):
         # x = query + self.dropout(x)
         if need_weights:
             x, attn = x
+        else:
+            x = x[0]
         x = query + x
 
         # pre-norm
