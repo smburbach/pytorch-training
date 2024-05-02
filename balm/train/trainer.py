@@ -34,10 +34,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import wandb
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
-
-import wandb
 
 from ..data import DataCollator, Dataset
 from ..modules import MaskedLMOutput
@@ -466,11 +465,15 @@ class Trainer:
             spaces = ""
         log_str = f"step {steps}{spaces} | loss: {outputs['loss'].item():0.4f}"
         if "lm_loss" in outputs:
-            log_str += f" | MLM loss: {outputs['lm_loss'].item():0.4f}"
+            log_str += f" | MLM loss: {outputs['lm_loss'].mean().item():0.4f}"
         if "router_z_loss" in outputs:
-            log_str += f" | router z-loss: {outputs['router_z_loss'].item():0.4f}"
+            log_str += (
+                f" | router z-loss: {outputs['router_z_loss'].mean().item():0.4f}"
+            )
         if "router_aux_loss" in outputs:
-            log_str += f" | router aux loss: {outputs['router_aux_loss'].item():0.4f}"
+            log_str += (
+                f" | router aux loss: {outputs['router_aux_loss'].mean().item():0.4f}"
+            )
         log_str += f" | lr: {lr:0.6f}"
         print(log_str)
 
