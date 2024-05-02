@@ -362,6 +362,14 @@ class BalmExpertChoiceMoEForMaskedLM(nn.Module):
             attention_mask (torch.BoolTensor): attention mask
             return_dict (bool): return a dictionary of outputs
         """
+        # # for some annoying reason, 🤗 uses attention_mask when
+        # # they're actually passing what PyTorch calls key_padding_mask
+        # # to fix, we'll swap attention_mask and key_padding_mask
+        # # if only an attention_mask is provided
+        # if attention_mask is not None and key_padding_mask is None:
+        #     key_padding_mask = ~attention_mask
+        #     attention_mask = None
+
         # encoder
         outputs = self.balm(
             input_ids,
