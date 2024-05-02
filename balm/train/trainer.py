@@ -34,9 +34,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import wandb
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
+
+import wandb
 
 from ..data import DataCollator, Dataset
 from ..modules import MaskedLMOutput
@@ -79,7 +80,7 @@ class Trainer:
         use_wandb: bool = False,
         run_name: Optional[str] = None,
         wandb_project: Optional[str] = None,
-        wandb_user: str = "brineylab",
+        wandb_entity: str = "brineylab",
         # callbacks: Optional[List[TrainerCallback]] = None,
     ):
         warnings.filterwarnings(
@@ -129,8 +130,8 @@ class Trainer:
         self.use_wandb = use_wandb
         self.timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         self.wandb_project = wandb_project
-        self.wandb_user = wandb_user
-        self._run_name = (
+        self.wandb_entity = wandb_entity
+        self.run_name = (
             run_name
             if run_name is not None
             else f"{self.model.__class__.__name__}_{self.timestamp}"
@@ -216,8 +217,13 @@ class Trainer:
     def train(self):
         if self.use_wandb:
             wandb.init(
-                project=self.wandb_project, entity=self.wandb_user, name=self.run_name
+                project=self.wandb_project,
+                entity=self.wandb_entity,
+                name=self.run_name,
+                dir=self.logging_dir,
             )
+            wandb.define_metric("global_step")
+            wandb.define_metric("*", step_metric="global_step", step_sync=True)
 
         self.model, self.optimizer = self.wrap_model()
         self.model.train()
@@ -262,10 +268,10 @@ class Trainer:
                     if self.use_wandb:
                         wandb.log(
                             {
-                                "loss": loss.item(),
-                                "lr": self.optimizer.param_groups[0]["lr"],
-                                "step": completed_steps,
-                                "epoch": epoch,
+                                "train/loss": loss.item(),
+                                "train/lr": self.optimizer.param_groups[0]["lr"],
+                                "global_step": completed_steps,
+                                "train/epoch": epoch,
                             }
                         )
 
@@ -278,6 +284,14 @@ class Trainer:
                     # print("Evaluating")
                     eval_output = self.evaluate(compute_metrics=self.compute_metrics)
                     self.print_eval_log(eval_output, self.num_train_steps)
+                    if self.use_wandb:
+                        eval_log_dict = {
+                            "eval/loss": eval_output.loss,
+                            "global_step": completed_steps,
+                        }
+                        for key, value in eval_output.metrics.items():
+                            eval_log_dict[f"eval/{key}"] = value
+                        wandb.log(eval_log_dict)
                     # print(f"<<< EVAL >>> loss: {eval_output.loss:.4f}", end="")
                     # if eval_output.metrics:
                     #     for key, value in eval_output.metrics.items():
@@ -368,14 +382,14 @@ class Trainer:
 
         eval_loss = eval_loss / num_eval_steps
 
-        if "accuracy" not in metric_results:
+        if "accuracy" not in metric_results and self.data_collator.mlm:
             predictions = F.softmax(all_logits, dim=-1).argmax(dim=-1)
             label_mask = all_labels != -100
             correct_predictions = torch.sum((predictions == all_labels) * label_mask)
             metric_results["accuracy"] = correct_predictions.float() / torch.sum(
                 label_mask
             )
-        if "perplexity" not in metric_results:
+        if "perplexity" not in metric_results and self.data_collator.mlm:
             logits_flat = all_logits.view(-1, all_logits.size(-1))
             labels_flat = all_labels.view(-1)
             ce_loss = F.cross_entropy(
