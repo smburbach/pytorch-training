@@ -166,7 +166,8 @@ class DataCollator:
         else:
             if isinstance(examples[0], (list, tuple, np.ndarray)):
                 examples = [torch.tensor(e, dtype=torch.long) for e in examples]
-            batch = {"input_ids": torch.stack(examples)}
+            # batch = {"input_ids": torch.stack(examples)}
+            batch = {"input_ids": torch.stack([d["input_ids"] for d in examples])}
 
         # MLM masking
         if self.mlm:
