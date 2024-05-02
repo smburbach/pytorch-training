@@ -25,13 +25,16 @@
 import math
 import os
 import random
+import warnings
+from datetime import datetime
 from functools import cached_property
 from typing import Callable, Dict, Optional, Tuple, Union
 
 import numpy as np
 import torch
-import torch.distributed as dist
 import torch.nn as nn
+import torch.nn.functional as F
+import wandb
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
@@ -73,8 +76,21 @@ class Trainer:
         compute_metrics: Optional[Callable[[EvalPrediction], Dict]] = None,
         output_dir: Optional[str] = None,
         logging_dir: Optional[str] = None,
+        use_wandb: bool = False,
+        run_name: Optional[str] = None,
+        wandb_project: Optional[str] = None,
+        wandb_user: str = "brineylab",
         # callbacks: Optional[List[TrainerCallback]] = None,
     ):
+        warnings.filterwarnings(
+            "ignore",
+            module="torch.nn.parallel*",
+            message=(
+                "Was asked to gather along dimension 0, but all"
+                " input tensors were scalars; will instead unsqueeze"
+                " and return a vector."
+            ),
+        )
         # if args is None:
         #     output_dir = "tmp_trainer"
         #     args = TrainingArguments(output_dir=output_dir)
@@ -109,6 +125,16 @@ class Trainer:
         self.deepspeed_config = deepspeed_config
         self.compute_metrics = compute_metrics
         self.use_cpu = use_cpu
+        # wandb
+        self.use_wandb = use_wandb
+        self.timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        self.wandb_project = wandb_project
+        self.wandb_user = wandb_user
+        self._run_name = (
+            run_name
+            if run_name is not None
+            else f"{self.model.__class__.__name__}_{self.timestamp}"
+        )
         # directories
         self.output_dir = output_dir if output_dir is not None else "tmp_trainer"
         os.makedirs(self.output_dir, exist_ok=True)
@@ -188,6 +214,11 @@ class Trainer:
         )
 
     def train(self):
+        if self.use_wandb:
+            wandb.init(
+                project=self.wandb_project, entity=self.wandb_user, name=self.run_name
+            )
+
         self.model, self.optimizer = self.wrap_model()
         self.model.train()
 
@@ -204,9 +235,6 @@ class Trainer:
                 self.optimizer.zero_grad()
                 collated = self.data_collator(batch)
                 inputs = self.place_inputs(collated)
-
-                # print("input_ids device: ", inputs["input_ids"].device)
-
                 outputs = self.model(
                     input_ids=inputs["input_ids"],
                     labels=inputs.get("labels", None),
@@ -231,6 +259,15 @@ class Trainer:
                         lr=self.optimizer.param_groups[0]["lr"],
                         num_train_steps=self.num_train_steps,
                     )
+                    if self.use_wandb:
+                        wandb.log(
+                            {
+                                "loss": loss.item(),
+                                "lr": self.optimizer.param_groups[0]["lr"],
+                                "step": completed_steps,
+                                "epoch": epoch,
+                            }
+                        )
 
                 # eval
                 if (
@@ -239,7 +276,12 @@ class Trainer:
                     and completed_steps % self.eval_steps == 0
                 ):
                     # print("Evaluating")
-                    self.evaluate(compute_metrics=self.compute_metrics)
+                    eval_output = self.evaluate(compute_metrics=self.compute_metrics)
+                    print(f"<<< EVAL >>> loss: {eval_output.loss:.4f}", end="")
+                    if eval_output.metrics:
+                        for key, value in eval_output.metrics.items():
+                            print(f" | {key}: {value:.4f}", end="")
+                    print("")
 
                 # save
                 if (
@@ -293,7 +335,7 @@ class Trainer:
                 inputs = self.place_inputs(collated)
                 outputs = self.model(
                     input_ids=inputs["input_ids"],
-                    labels=inputs.get("labels", None),
+                    labels=inputs["labels"],
                     attention_mask=inputs.get("attention_mask", None),
                     key_padding_mask=inputs.get("key_padding_mask", None),
                 )
@@ -324,6 +366,23 @@ class Trainer:
             )
 
         eval_loss = eval_loss / num_eval_steps
+
+        if "accuracy" not in metric_results:
+            predictions = F.softmax(all_logits, dim=-1).argmax(dim=-1)
+            label_mask = all_labels != -100
+            correct_predictions = torch.sum((predictions == all_labels) * label_mask)
+            metric_results["accuracy"] = correct_predictions.float() / torch.sum(
+                label_mask
+            )
+        if "perplexity" not in metric_results:
+            logits_flat = all_logits.view(-1, all_logits.size(-1))
+            labels_flat = all_labels.view(-1)
+            ce_loss = F.cross_entropy(
+                logits_flat, labels_flat, ignore_index=-100, reduction="mean"
+            )
+            perplexity = torch.exp(ce_loss)
+            metric_results["perplexity"] = perplexity.item()
+
         eval_output = EvalOutput(
             loss=eval_loss,
             predictions=outputs["logits"].argmax(dim=-1).cpu().numpy(),
@@ -331,12 +390,6 @@ class Trainer:
             metrics=metric_results,
             num_samples=len(eval_dataloader),
         )
-
-        print(f"<<< EVAL >>> loss: {eval_output.loss:.4f}", end="")
-        if eval_output.metrics:
-            for key, value in eval_output.metrics.items():
-                print(f" | {key}: {value:.4f}", end="")
-        print("")
 
         return eval_output
 
@@ -364,16 +417,11 @@ class Trainer:
         return model, optimizer
 
     def place_inputs(self, collated: Dict):
-        placed_inputs = {}
+        placed = {}
         for key, value in collated.items():
             value = value.to(self.device)
-            placed_inputs[key] = value
-            # if value is not None:
-            #     try:
-            #         value = value.to(self.device)
-            #     except AttributeError:
-            #         value = torch.tensor(value).to(self.device)
-        return placed_inputs
+            placed[key] = value
+        return placed
 
     @staticmethod
     def set_seed(seed: int):
