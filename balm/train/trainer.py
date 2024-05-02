@@ -253,7 +253,7 @@ class Trainer:
                 completed_steps += 1
                 pbar.update(1)
                 if completed_steps % self.logging_steps == 0:
-                    self.print_loss(
+                    self.print_train_log(
                         steps=completed_steps,
                         outputs=outputs,
                         lr=self.optimizer.param_groups[0]["lr"],
@@ -277,11 +277,12 @@ class Trainer:
                 ):
                     # print("Evaluating")
                     eval_output = self.evaluate(compute_metrics=self.compute_metrics)
-                    print(f"<<< EVAL >>> loss: {eval_output.loss:.4f}", end="")
-                    if eval_output.metrics:
-                        for key, value in eval_output.metrics.items():
-                            print(f" | {key}: {value:.4f}", end="")
-                    print("")
+                    self.print_eval_log(eval_output, self.num_train_steps)
+                    # print(f"<<< EVAL >>> loss: {eval_output.loss:.4f}", end="")
+                    # if eval_output.metrics:
+                    #     for key, value in eval_output.metrics.items():
+                    #         print(f" | {key}: {value:.4f}", end="")
+                    # print("")
 
                 # save
                 if (
@@ -438,15 +439,15 @@ class Trainer:
         torch.cuda.manual_seed_all(seed)  # safe even if cuda isn't available
 
     @staticmethod
-    def print_loss(
+    def print_train_log(
         steps: int,
         outputs: Union[MaskedLMOutput, dict],
         lr: float,
         num_train_steps: Optional[int] = None,
     ):
         if num_train_steps is not None:
-            total_spaces = len(str(num_train_steps))
-            spaces = " " * (total_spaces - len(str(steps)))
+            total_spaces = max(13, len(str(num_train_steps)))
+            spaces = " " * (total_spaces - len(f"steps {steps} |"))
         else:
             spaces = ""
         log_str = f"step {steps}{spaces} | loss: {outputs['loss'].item():0.4f}"
@@ -458,3 +459,19 @@ class Trainer:
             log_str += f" | router aux loss: {outputs['router_aux_loss'].item():0.4f}"
         log_str += f" | lr: {lr:0.6f}"
         print(log_str)
+
+    @staticmethod
+    def print_eval_log(
+        eval_output: EvalOutput,
+        num_train_steps: Optional[int] = None,
+    ):
+        if num_train_steps is not None:
+            total_spaces = max(13, len(str(num_train_steps)))
+            spaces = " " * (total_spaces - 12)
+        else:
+            spaces = " "
+        print(f"<< EVAL >>{spaces}| loss: {eval_output.loss:.4f}", end="")
+        if eval_output.metrics:
+            for key, value in eval_output.metrics.items():
+                print(f" | {key}: {value:.4f}", end="")
+        print("")
