@@ -23,9 +23,12 @@
 
 
 import os
+from typing import Optional, Union
 
 import torch
 import torch.nn as nn
+
+from ..config import BaseConfig
 
 
 class BalmBase(nn.Module):
@@ -33,21 +36,63 @@ class BalmBase(nn.Module):
     Base class for Balm models.
     """
 
-    def __init__(self):
+    def __init__(self, config: BaseConfig):
         super().__init__()
+        self.config = config
 
     @property
     def num_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     @classmethod
-    def from_pretrained(cls, model_path: str):
+    def from_pretrained(
+        cls, model_path: str, config: Optional[Union[str, BaseConfig, dict]] = None
+    ):
         """
-        Load a pretrained model
+        Load a pretrained model.
+
+        Parameters
+        ----------
+        model_path : str
+            The path to a diretory containing the pretrained model.
+            Model file should be named ``"model.pt"``.
+
+        config : Optional[Union[str, BaseConfig, dict]], optional
+            Alternate configuration object or path to an alternate configuration file.
+            If not provided, the configuration (``config.json``) will be loaded from the
+            model directory.
+
+        Returns
+        -------
+        cls
+            The loaded model.
         """
-        config_path = os.path.join(model_path, "config.json")
+        # config
+        if config is None:
+            config_path = os.path.join(model_path, "config.json")
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(
+                    f"Configuration file not found in the model directory: {model_path}"
+                )
+            config = cls.config_cls.from_json(config_path)
+        elif isinstance(config, str):
+            config_path = os.path.join(model_path, "config.json")
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(f"Configuration file not found: {config_path}")
+            config = cls.config_cls.from_json(config_path)
+        elif isinstance(config, BaseConfig):
+            pass
+        elif isinstance(config, dict):
+            config = cls.config_cls.from_dict(config)
+        else:
+            raise ValueError(f"Invalid configuration type: {type(config)}")
+
+        # model
         model_path = os.path.join(model_path, "model.pt")
-        config = cls.config_cls.from_json(config_path)
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(
+                f"Model file (model.pt) not found in the supplied model directory: {model_path}"
+            )
         model = cls(config=config)
         model.load_state_dict(torch.load(model_path))
         return model
