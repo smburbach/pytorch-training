@@ -318,6 +318,8 @@ class Trainer:
                     print("\nTraining complete")
                     break
         pbar.close()
+        if self.use_wandb:
+            wandb.finish()
 
     def evaluate(
         self,
@@ -340,7 +342,6 @@ class Trainer:
 
         self.model.eval()  # Set the model to evaluation mode
         eval_loss = 0.0
-        # num_eval_steps = 0
         all_logits = []
         all_preds = []
         all_labels = []
@@ -363,7 +364,6 @@ class Trainer:
                 )
                 tmp_eval_loss = outputs["loss"]
                 eval_loss += tmp_eval_loss.mean().item()
-                # num_eval_steps += 1
                 eval_pbar.update(1)
 
                 if "logits" in outputs:
@@ -390,6 +390,8 @@ class Trainer:
         eval_loss = eval_loss / num_eval_steps
 
         if "accuracy" not in metric_results and self.data_collator.mlm:
+            # only compute accuracy if mlm is enabled and it isn't
+            # already computed in compute_metrics
             predictions = F.softmax(all_logits, dim=-1).argmax(dim=-1)
             label_mask = all_labels != -100
             correct_predictions = torch.sum((predictions == all_labels) * label_mask)
@@ -397,6 +399,8 @@ class Trainer:
                 label_mask
             )
         if "perplexity" not in metric_results and self.data_collator.mlm:
+            # only compute perplexity if mlm is enabled and it isn't
+            # already computed in compute_metrics
             logits_flat = all_logits.view(-1, all_logits.size(-1))
             labels_flat = all_labels.view(-1)
             ce_loss = F.cross_entropy(
@@ -414,6 +418,18 @@ class Trainer:
         )
 
         return eval_output
+
+    def terminate(self):
+        """
+        Clean up resources. This will free up GPU memory by removing the
+        model, optimizer, and scheduler from memory.
+        """
+        del self.model
+        if hasattr(self, "optimizer"):
+            del self.optimizer
+        if hasattr(self, "scheduler"):
+            del self.scheduler
+        torch.cuda.empty_cache()
 
     def save_model(self, save_directory):
         """
