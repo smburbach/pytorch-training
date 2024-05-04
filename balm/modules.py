@@ -89,7 +89,6 @@ class TransformerLayer(nn.Module):
         num_heads: int,
         dropout: float = 0.0,
         attention_dropout: float = 0.0,
-        # attention_batch_first: bool = True,
         layer_norm_eps: float = 1e-5,
         activation: str = "gelu",
     ):
@@ -180,7 +179,7 @@ class RoformerLayer(nn.Module):
         max_len: int,
         dropout: float = 0.0,
         attention_dropout: float = 0.0,
-        # attention_batch_first: bool = True,
+        token_embedding_dropout: float = 0.0,
         layer_norm_eps: float = 1e-5,
     ):
         """
@@ -202,6 +201,15 @@ class RoformerLayer(nn.Module):
 
         dropout : float
             The dropout probability.
+
+        attention_dropout : float
+            The dropout probability for the attention weights.
+
+        token_embedding_dropout : float
+            The dropout probability for the token embeddings.
+
+        layer_norm_eps : float
+            The epsilon value for the layer normalization.
         """
         super().__init__()
         self.rotary_embedding = RotaryPositionalEmbeddings(embed_dim, max_len)
@@ -222,6 +230,7 @@ class RoformerLayer(nn.Module):
         )
 
         self.dropout = nn.Dropout(dropout)
+        self.token_embedding_dropout = nn.Dropout(token_embedding_dropout)
 
     def forward(
         self,
@@ -233,9 +242,9 @@ class RoformerLayer(nn.Module):
         need_weights: bool = False,
     ):
         # pre-norm
-        query_norm = self.norm1(query)
-        key_norm = self.norm1(key)
-        value_norm = self.norm1(value)
+        query_norm = self.token_embedding_dropout(self.norm1(query))
+        key_norm = self.token_embedding_dropout(self.norm1(key))
+        value_norm = self.token_embedding_dropout(self.norm1(value))
 
         # rotary embeddings
         query_rot = self.rotary_embedding(query_norm)
@@ -464,10 +473,9 @@ class SparseTransformerLayer(nn.Module):
         num_shared_experts: int = 0,
         top_k: int = 1,
         expert_activation: str = "gelu",
-        expert_ffn_dropout: float = 0.0,
-        ffn_dropout: float = 0.0,
+        dropout: float = 0.1,
         attention_dropout: float = 0.0,
-        # attention_batch_first: bool = True,
+        expert_ffn_dropout: float = 0.0,
         layer_norm_eps: float = 1e-5,
         router_dtype: str = "float32",
         router_bias: bool = False,
@@ -481,9 +489,8 @@ class SparseTransformerLayer(nn.Module):
         self.embed_dim = embed_dim
         self.ffn_dim = ffn_dim
         self.num_heads = num_heads
-        self.attention_dropout = attention_dropout
-        self.ffn_dropout = ffn_dropout
-        self.expert_ffn_dropout = expert_ffn_dropout
+        # self.attention_dropout = attention_dropout
+        # self.expert_ffn_dropout = expert_ffn_dropout
         self.layer_norm_eps = layer_norm_eps
 
         # can't use rotary embeddings with nn.MultiheadAttention
@@ -496,7 +503,7 @@ class SparseTransformerLayer(nn.Module):
         self.self_attn = nn.MultiheadAttention(
             embed_dim=self.embed_dim,
             num_heads=self.num_heads,
-            dropout=self.attention_dropout,
+            dropout=attention_dropout,
             batch_first=True,
         )
 
@@ -516,7 +523,7 @@ class SparseTransformerLayer(nn.Module):
             router_class=router_class,
             expert_class=expert_class,
         )
-        self.ff_dropout = nn.Dropout(self.ffn_dropout)
+        self.dropout = nn.Dropout(dropout)
 
         self.norm1 = nn.LayerNorm(self.embed_dim, eps=self.layer_norm_eps)
         self.norm2 = nn.LayerNorm(self.embed_dim, eps=self.layer_norm_eps)
@@ -580,13 +587,13 @@ class SparseTransformerLayer(nn.Module):
             x, attn = x
         else:
             x = x[0]
-        x = residual + x
+        x = residual + self.dropout(x)
         x = self.norm1(x)
 
         # sparse feedforward
         residual = x
         x, router_tuple = self.mlp(x)  # router_tuple is (router_logits, expert_index)
-        x = self.ff_dropout(x)
+        x = self.dropout(x)
         x = self.norm2(residual + x)
         if output_router_logits and router_tuple is not None:
             if need_weights:
@@ -617,10 +624,9 @@ class HybridSparseTransformerLayer(nn.Module):
         top_k: int = 2,
         activation: str = "gelu",
         expert_activation: str = "gelu",
-        ffn_dropout: float = 0.0,
+        dropout: float = 0.1,
         attention_dropout: float = 0.0,
         expert_ffn_dropout: float = 0.0,
-        # attention_batch_first: bool = True,
         layer_norm_eps: float = 1e-5,
         router_dtype: str = "float32",
         router_bias: bool = False,
@@ -635,9 +641,8 @@ class HybridSparseTransformerLayer(nn.Module):
             embed_dim=embed_dim,
             ffn_dim=ffn_dim,
             num_heads=num_heads,
-            dropout=ffn_dropout,
+            dropout=dropout,
             attention_dropout=attention_dropout,
-            # attention_batch_first=attention_batch_first,
             layer_norm_eps=layer_norm_eps,
             activation=activation,
         )
@@ -743,10 +748,10 @@ class SparseRoformerLayer(nn.Module):
         max_len: int,
         expert_capacity: int,
         expert_activation: str = "gelu",
-        expert_ffn_dropout: float = 0.0,
-        ffn_dropout: float = 0.0,
+        dropout: float = 0.1,
         attention_dropout: float = 0.0,
-        # attention_batch_first: bool = True,
+        expert_ffn_dropout: float = 0.0,
+        token_embedding_dropout: float = 0.0,
         layer_norm_eps: float = 1e-5,
         router_dtype: str = "float32",
         router_bias: bool = False,
@@ -781,7 +786,8 @@ class SparseRoformerLayer(nn.Module):
             router_class=router_class,
             expert_class=expert_class,
         )
-        self.ff_dropout = nn.Dropout(ffn_dropout)
+        self.dropout = nn.Dropout(dropout)
+        self.token_embedding_dropout = nn.Dropout(token_embedding_dropout)
 
         self.norm1 = nn.LayerNorm(embed_dim, eps=layer_norm_eps)
         self.norm2 = nn.LayerNorm(embed_dim, eps=layer_norm_eps)
@@ -797,9 +803,9 @@ class SparseRoformerLayer(nn.Module):
         output_router_logits: bool = True,
     ):
         # pre-norm
-        query_norm = self.norm1(query)
-        key_norm = self.norm1(key)
-        value_norm = self.norm1(value)
+        query_norm = self.token_embedding_dropout(self.norm1(query))
+        key_norm = self.token_embedding_dropout(self.norm1(key))
+        value_norm = self.token_embedding_dropout(self.norm1(value))
 
         # rotary embeddings
         query_rot = self.rotary_embedding(query_norm)
@@ -820,7 +826,7 @@ class SparseRoformerLayer(nn.Module):
             x, attn = x
         else:
             x = x[0]
-        x = query + x
+        x = query + self.dropout(x)
 
         # pre-norm
         residual = x
@@ -828,7 +834,7 @@ class SparseRoformerLayer(nn.Module):
 
         # sparse feedforward
         x, router_tuple = self.mlp(x)
-        x = residual + self.ff_dropout(x)
+        x = residual + self.dropout(x)
 
         if output_router_logits and router_tuple is not None:
             if need_weights:
