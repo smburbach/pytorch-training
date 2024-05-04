@@ -27,22 +27,28 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
+from ..config import BalmConfig
 from ..modules import BalmLMHead, MaskedLMOutput, RoformerLayer
+from .base import BalmBase
 
 
-class BalmModel(nn.Module):
+class BalmModel(BalmBase):
+    config_cls = BalmConfig
+
     def __init__(
         self,
-        embed_dim: int = 512,
-        ffn_dim: int = 2048,
-        num_layers: int = 6,
-        num_heads: int = 8,
-        vocab_size: int = 33,
-        max_length: int = 320,
-        dropout: float = 0.0,
-        attention_dropout: float = 0.1,
-        # attention_batch_first: bool = True,
-        layer_norm_eps: float = 1e-5,
+        config: BalmConfig,
+        # embed_dim: int = 512,
+        # ffn_dim: int = 2048,
+        # num_layers: int = 6,
+        # num_heads: int = 8,
+        # vocab_size: int = 33,
+        # max_length: int = 320,
+        # dropout: float = 0.0,
+        # attention_dropout: float = 0.1,
+        # token_embedding_dropout: float = 0.0,
+        # layer_norm_eps: float = 1e-5,
+        # padding_idx: int = 0,
     ):
         """
         BALM model, with rotary embeddings, pre-norm, and SwiGLU activations.
@@ -73,31 +79,55 @@ class BalmModel(nn.Module):
         attention_dropout : float, default = 0.1
             The dropout probability for the attention weights.
 
-        attention_batch_first : bool, default = True
-            Whether to put the batch dimension first in the attention weights.
+        token_embedding_dropout : float, default = 0.0
+            The dropout probability for the token embeddings.
 
         layer_norm_eps : float, default = 1e-5
             The epsilon value for the layer normalization.
 
         """
         super().__init__()
-        self.embed_tokens = nn.Embedding(vocab_size, embed_dim)
+        # self.embed_tokens = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
+        # self.embedding_dropout = nn.Dropout(token_embedding_dropout)
+        # self.layers = nn.ModuleList(
+        #     [
+        #         RoformerLayer(
+        #             embed_dim,
+        #             ffn_dim,
+        #             num_heads,
+        #             max_length,
+        #             dropout=dropout,
+        #             attention_dropout=attention_dropout,
+        #             layer_norm_eps=layer_norm_eps,
+        #         )
+        #         for _ in range(num_layers)
+        #     ]
+        # )
+        # self.final_layer_norm = nn.LayerNorm(embed_dim, eps=layer_norm_eps)
+        self.config = config
+        self.embed_tokens = nn.Embedding(
+            self.config.vocab_size,
+            self.config.embed_dim,
+            padding_idx=self.config.padding_idx,
+        )
+        self.embedding_dropout = nn.Dropout(self.config.token_embedding_dropout)
         self.layers = nn.ModuleList(
             [
                 RoformerLayer(
-                    embed_dim,
-                    ffn_dim,
-                    num_heads,
-                    max_length,
-                    dropout=dropout,
-                    attention_dropout=attention_dropout,
-                    # attention_batch_first=True,
-                    layer_norm_eps=layer_norm_eps,
+                    self.config.embed_dim,
+                    self.config.ffn_dim,
+                    self.config.num_heads,
+                    self.config.max_length,
+                    dropout=self.config.dropout,
+                    attention_dropout=self.config.attention_dropout,
+                    layer_norm_eps=self.config.layer_norm_eps,
                 )
-                for _ in range(num_layers)
+                for _ in range(self.config.num_layers)
             ]
         )
-        self.final_layer_norm = nn.LayerNorm(embed_dim, eps=layer_norm_eps)
+        self.final_layer_norm = nn.LayerNorm(
+            self.config.embed_dim, eps=self.config.layer_norm_eps
+        )
 
     @property
     def num_parameters(self):
@@ -123,6 +153,7 @@ class BalmModel(nn.Module):
             The output tensor. The shape is (batch_size, seq_len, embed_dim).
         """
         x = self.embed_tokens(x)
+        x = self.embedding_dropout(x)
         for layer in self.layers:
             x = layer(
                 x,
@@ -140,19 +171,23 @@ class BalmModel(nn.Module):
         return x
 
 
-class BalmForMaskedLM(nn.Module):
+class BalmForMaskedLM(BalmBase):
+    config_cls = BalmConfig
+
     def __init__(
         self,
-        embed_dim: int = 512,
-        ffn_dim: int = 2048,
-        num_layers: int = 6,
-        num_heads: int = 8,
-        vocab_size: int = 33,
-        max_length: int = 320,
-        dropout: float = 0.0,
-        attention_dropout: float = 0.1,
-        # attention_batch_first: bool = True,
-        layer_norm_eps: float = 1e-5,
+        config: BalmConfig,
+        # embed_dim: int = 512,
+        # ffn_dim: int = 2048,
+        # num_layers: int = 6,
+        # num_heads: int = 8,
+        # vocab_size: int = 33,
+        # max_length: int = 320,
+        # dropout: float = 0.0,
+        # attention_dropout: float = 0.1,
+        # token_embedding_dropout: float = 0.0,
+        # layer_norm_eps: float = 1e-5,
+        # padding_idx: int = 0,
     ):
         """
         BALM model for masked language modeling. Uses the base BALM model with rotary embeddings, pre-norm,
@@ -184,28 +219,33 @@ class BalmForMaskedLM(nn.Module):
         attention_dropout : float, default = 0.1
             The dropout probability for the attention weights.
 
-        attention_batch_first : bool, default = True
-            Whether to put the batch dimension first in the attention weights.
+        token_embedding_dropout : float, default = 0.0
+            The dropout probability for the token embeddings.
 
         layer_norm_eps : float, default = 1e-5
             The epsilon value for the layer normalization.
 
         """
         super().__init__()
-        self.balm = BalmModel(
-            embed_dim=embed_dim,
-            ffn_dim=ffn_dim,
-            num_heads=num_heads,
-            num_layers=num_layers,
-            vocab_size=vocab_size,
-            max_length=max_length,
-            dropout=dropout,
-            attention_dropout=attention_dropout,
-            # attention_batch_first=attention_batch_first,
-            layer_norm_eps=layer_norm_eps,
-        )
-        self.lm_head = BalmLMHead(embed_dim, vocab_size)
+        self.config = config
+        self.balm = BalmModel(config=self.config)
+        self.lm_head = BalmLMHead(self.config.embed_dim, self.config.vocab_size)
         self.criterion = nn.CrossEntropyLoss(ignore_index=-100)
+        # self.balm = BalmModel(
+        #     embed_dim=embed_dim,
+        #     ffn_dim=ffn_dim,
+        #     num_heads=num_heads,
+        #     num_layers=num_layers,
+        #     vocab_size=vocab_size,
+        #     max_length=max_length,
+        #     dropout=dropout,
+        #     attention_dropout=attention_dropout,
+        #     token_embedding_dropout=token_embedding_dropout,
+        #     layer_norm_eps=layer_norm_eps,
+        #     padding_idx=padding_idx,
+        # )
+        # self.lm_head = BalmLMHead(embed_dim, vocab_size)
+        # self.criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
     @property
     def num_parameters(self):
