@@ -129,9 +129,9 @@ class BalmModel(BalmBase):
             self.config.embed_dim, eps=self.config.layer_norm_eps
         )
 
-    @property
-    def num_parameters(self):
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+    # @property
+    # def num_parameters(self):
+    #     return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     def forward(
         self,
@@ -247,9 +247,9 @@ class BalmForMaskedLM(BalmBase):
         # self.lm_head = BalmLMHead(embed_dim, vocab_size)
         # self.criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
-    @property
-    def num_parameters(self):
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+    # @property
+    # def num_parameters(self):
+    #     return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     def forward(
         self,
