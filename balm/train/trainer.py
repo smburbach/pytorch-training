@@ -101,13 +101,23 @@ class Trainer:
         self.seed = seed
         if seed is not None:
             self.set_seed(seed)
+
+        # model and model config
         self.model = model
+        if hasattr(model, "config"):
+            self.model_config = model.config
+        else:
+            self.model_config = None
+
+        # data
         self.data_collator = data_collator
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
         self.eval_collator = (
             eval_collator if eval_collator is not None else data_collator
         )
+
+        # hyperparameters
         self.per_device_train_batch_size = per_device_train_batch_size
         self.per_device_eval_batch_size = per_device_eval_batch_size
         self.epochs = epochs
@@ -126,6 +136,7 @@ class Trainer:
         self.deepspeed_config = deepspeed_config
         self.compute_metrics = compute_metrics
         self.use_cpu = use_cpu
+
         # wandb
         self.use_wandb = use_wandb
         self.timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
@@ -136,6 +147,7 @@ class Trainer:
             if run_name is not None
             else f"{self.model.__class__.__name__}_{self.timestamp}"
         )
+
         # directories
         self.output_dir = (
             os.path.abspath(output_dir) if output_dir is not None else "tmp_trainer"
@@ -442,7 +454,8 @@ class Trainer:
         """
         os.makedirs(save_directory, exist_ok=True)
         torch.save(self.model.state_dict(), os.path.join(save_directory, "model.pt"))
-        self.model.config.to_json(os.path.join(save_directory, "config.json"))
+        if self.model_config is not None:
+            self.model_config.to_json(os.path.join(save_directory, "config.json"))
         if self.optimizer is not None:
             torch.save(
                 self.optimizer.state_dict(),
