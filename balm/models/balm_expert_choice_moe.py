@@ -133,8 +133,8 @@ class BalmExpertChoiceMoEModel(nn.Module):
                         router_bias=router_bias,
                         router_jitter=router_jitter,
                         router_ignore_padding_tokens=router_ignore_padding_tokens,
-                        router_class=router_class,
-                        expert_class=expert_class,
+                        router_class=ExpertChoiceRouter,
+                        expert_class=Expert,
                     )
                     for _ in range(num_layers)
                 ]
