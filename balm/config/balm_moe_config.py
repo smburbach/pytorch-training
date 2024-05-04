@@ -24,7 +24,7 @@
 
 from typing import Optional
 
-from .base import BaseConfig
+from .base_config import BaseConfig
 
 
 class BalmMoEConfig(BaseConfig):
