@@ -1,8 +1,8 @@
 #!/usr/bin/python
-# filename: balm_moe.py
+# filename: balm_moe_config.py
 
 #
-# Copyright (c) 2023 Bryan Briney
+# Copyright (c) 2024 Bryan Briney
 # License: GNU General Public License, version 3.0 (http://opensource.org/licenses/gpl-3-0/)
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this software
@@ -24,178 +24,135 @@
 
 from typing import Optional
 
-from transformers import PretrainedConfig
+from .base import BaseConfig
 
 
-class BalmMoEConfig(PretrainedConfig):
-    r"""
-    This is the configuration class to store the configuration of a [`SwitchTransformersModel`]. It is used to
-    instantiate a SwitchTransformers model according to the specified arguments, defining the model architecture.
-    Instantiating a configuration with the defaults will yield a similar configuration to that of the
-    SwitchTransformers [google/switch-base-8](https://huggingface.co/google/switch-base-8) architecture.
-
-    Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
-    documentation from [`PretrainedConfig`] for more information.
-
-    Arguments:
-        vocab_size (`int`, *optional*, defaults to 32128):
-            Vocabulary size of the SwitchTransformers model. Defines the number of different tokens that can be
-            represented by the `inputs_ids` passed when calling [`SwitchTransformersModel`].
-        d_model (`int`, *optional*, defaults to 512):
-            Size of the encoder layers and the pooler layer.
-        d_kv (`int`, *optional*, defaults to 64):
-            Size of the key, query, value projections per attention head. `d_kv` has to be equal to `d_model //
-            num_heads`.
-        d_ff (`int`, *optional*, defaults to 2048):
-            Size of the intermediate feed forward layer in each `SwitchTransformersBlock`.
-        expert_capacity (`int`, *optional*, defaults to 64):
-            Number of tokens that can be stored in each expert. If set to 1, the model will behave like a regular
-            Transformer.
-        num_layers (`int`, *optional*, defaults to 12):
-            Number of dense hidden layers in the Transformer encoder layer.
-        num_sparse_encoder_layers (`int`, *optional*, defaults to 6):
-            Number of sparse (MoE) dense hidden layers in the Transformer encoder layer.
-        num_decoder_layers (`int`, *optional*, defaults to 12):
-            Number of hidden layers in the Transformer decoder. Will use the same value as `num_layers` if not set.
-        num_sparse_decoder_layers (`int`, *optional*, defaults to 12):
-            Number of sparse (MoE) dense hidden layers in the Transformer decoder layer.
-        num_heads (`int`, *optional*, defaults to 8):
-            Number of attention heads for each attention layer in the Transformer encoder.
-        num_experts (`int`, *optional*, defaults to 8):
-            Number of experts for each SwitchTransformer layer.
-        router_type (`str`, *optional*, defaults to `"tokens_masked"`):
-            Router type - choose between `"tokens_masked", `"tokens_scatter"` and `"experts_masked"`.
-        router_bias (`bool`, *optional*, defaults to `True`):
-            Whether to add a bias to the router.
-        router_jitter_noise (`float`, *optional*, defaults to 0.1):
-            Amount of noise to add to the router.
-        router_dtype (`str`, *optional*, default to `"float32"`):
-            The `dtype` used for the routers. It is preferable to keep the `dtype` to `"float32"` as specified in the
-            *selective precision* discussion in [the paper](https://arxiv.org/abs/2101.03961).
-        router_ignore_padding_tokens (`bool`, *optional*, defaults to `False`):
-            Whether to ignore padding tokens when routing.
-        relative_attention_num_buckets (`int`, *optional*, defaults to 32):
-            The number of buckets to use for each attention layer.
-        relative_attention_max_distance (`int`, *optional*, defaults to 128):
-            The maximum distance of the longer sequences for the bucket separation.
-        dropout_rate (`float`, *optional*, defaults to 0.1):
-            The ratio for all dropout layers.
-        layer_norm_eps (`float`, *optional*, defaults to 1e-6):
-            The epsilon used by the layer normalization layers.
-        router_z_loss_coef (`float`, *optional*, defaults to 0.001):
-            The z loss factor for the total loss.
-        router_aux_loss_coef (`float`, *optional*, defaults to 0.001):
-            The aux loss factor for the total loss.
-        initializer_factor (`float`, *optional*, defaults to 1):
-            A factor for initializing all weight matrices (should be kept to 1, used internally for initialization
-            testing).
-        feed_forward_proj (`string`, *optional*, defaults to `"relu"`):
-            Type of feed forward layer to be used. Should be one of `"relu"` or `"gated-gelu"`. SwitchTransformersv1.1
-            uses the `"gated-gelu"` feed forward projection. Original SwitchTransformers uses `"relu"`.
-        add_router_probs (`bool`, *optional*, defaults to `False`):
-            Whether to output router probabilities to compute router auxiliary loss.
-        use_cache (`bool`, *optional*, defaults to `True`):
-            Whether or not the model should return the last key/values attentions (not used by all models).
-
-        position_embedding_type (`str`, *optional*, defaults to `"absolute"`):
-            Type of position embedding. Choose one of `"absolute"`, `"relative_key"`, `"relative_key_query"`. For
-            positional embeddings use `"absolute"`. For more information on `"relative_key"`, please refer to
-            [Self-Attention with Relative Position Representations (Shaw et al.)](https://arxiv.org/abs/1803.02155).
-            For more information on `"relative_key_query"`, please refer to *Method 4* in [Improve Transformer Models
-            with Better Relative Position Embeddings (Huang et al.)](https://arxiv.org/abs/2009.13658).
-    """
-
-    model_type = "BALM_MoE"
-    keys_to_ignore_at_inference = ["past_key_values"]
-    # attribute_map = {"hidden_size": "d_model", "num_attention_heads": "num_heads", "num_hidden_layers": "num_layers"}
-
+class BalmMoEConfig(BaseConfig):
     def __init__(
         self,
-        vocab_size: Optional[int] = None,
-        hidden_size: int = 768,
-        intermediate_size: int = 3072,
-        num_hidden_layers: int = 12,
-        num_attention_heads: int = 12,
+        embed_dim: int = 320,
+        ffn_dim: int = 1280,
+        num_layers: int = 6,
+        num_heads: int = 20,
         num_experts: int = 8,
+        max_length: int = 320,
+        vocab_size: int = 33,
         expert_capacity: Optional[int] = None,
         expert_capacity_multiplier: float = 1.25,
         expert_activation: str = "gelu",
-        max_position_embeddings: int = 320,
-        position_embedding_type: str = "absolute",
-        router_bias: bool = False,
-        router_jitter: float = 0.01,
-        router_dtype: str = "float32",
-        router_ignore_padding_tokens: bool = False,
-        dropout_prob: float = 0.1,
-        hidden_dropout_prob: Optional[float] = None,
-        attention_probs_dropout_prob: Optional[float] = None,
-        embedding_dropout_prob: Optional[float] = None,
-        layer_norm_eps: float = 1e-12,
         router_z_loss_coef: float = 0.001,
         router_aux_loss_coef: float = 0.001,
-        initializer_factor: float = 1.0,
-        add_router_probs: bool = False,
-        pad_token_id: Optional[int] = None,
-        mask_token_id: Optional[int] = None,
-        **kwargs,
+        alternate_sparsity: bool = False,
+        router_top_k: int = 1,
+        router_bias: bool = False,
+        router_jitter: float = 0.0,
+        router_dtype: str = "float32",
+        router_ignore_padding_tokens: bool = True,
+        attention_dropout: float = 0.0,
+        expert_ffn_dropout: float = 0.0,
+        token_embedding_dropout: float = 0.0,
+        layer_norm_eps: float = 1e-5,
+        padding_idx: int = 0,
     ):
-        self.vocab_size = vocab_size
-        self.embed_dim = hidden_size
-        self.ffn_embed_dim = intermediate_size
-        self.num_layers = num_hidden_layers
-        self.num_heads = num_attention_heads
-        self.max_position_embeddings = max_position_embeddings
-        position_embedding_type = position_embedding_type.lower()
-        if position_embedding_type not in [
-            "absolute",
-            "relative_key",
-            "relative_key_query",
-        ]:
-            raise ValueError(
-                f"`position_embedding_type` must be one of 'absolute', 'relative_key' or 'relative_key_query', got {position_embedding_type}"
-            )
-        self.position_embedding_type = position_embedding_type
+        """
+        Configuration for the BalmMoE model.
 
+        Parameters
+        ----------
+        embed_dim : int, default=320
+            The dimension of the token embeddings.
+
+        ffn_dim : int, default=1280
+            The dimension of the feed-forward network.
+
+        num_layers : int, default=6
+            The number of layers in the transformer.
+
+        num_heads : int, default=20
+            The number of heads in the transformer.
+
+        num_experts : int, default=8
+            The number of experts in the transformer.
+
+        max_length : int, default=320
+            The maximum length of the input sequence.
+
+        vocab_size : int, default=33
+            The vocabulary size.
+
+        expert_capacity : int, optional
+            The capacity of each expert. If not provided, it will be calculated as `max_length / num_experts * expert_capacity_multiplier`.
+
+        expert_capacity_multiplier : float, default=1.25
+            The multiplier for the expert capacity.
+
+        expert_activation : str, default="gelu"
+            The activation function to use for the experts. Options are "relu" and "gelu".
+
+        router_z_loss_coef : float, default=0.001
+            The coefficient for the router z loss.
+
+        router_aux_loss_coef : float, default=0.001
+            The coefficient for the router auxiliary loss.
+
+        alternate_sparsity : bool, default=False
+            Whether to use alternate sparsity for the router.
+
+        router_top_k : int, default=1
+            The top k to use for the router.
+
+        router_bias : bool, default=False
+            Whether to use a bias for the router.
+
+        router_jitter : float, default=0.0
+            The jitter to use for the router.
+
+        router_dtype : str, default="float32"
+            The dtype to use for the router. Options are "float32" and "float16".
+
+        router_ignore_padding_tokens : bool, default=True
+            Whether to ignore padding tokens for the router.
+
+        attention_dropout : float, default=0.0
+            The dropout to use for the attention.
+
+        expert_ffn_dropout : float, default=0.0
+            The dropout to use for the expert feed-forward network.
+
+        token_embedding_dropout : float, default=0.0
+            The dropout to use for the token embeddings.
+
+        layer_norm_eps : float, default=1e-5
+            The epsilon to use for the layer normalization.
+
+        padding_idx : int, default=0
+            The index to use for the padding tokens.
+        """
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.ffn_dim = ffn_dim
+        self.num_layers = num_layers
+        self.num_heads = num_heads
         self.num_experts = num_experts
-        if expert_capacity is None:
-            expert_capacity = (
-                max_position_embeddings
-                / num_attention_heads
-                * expert_capacity_multiplier
-            )
-        self.expert_capacity = int(expert_capacity)
+        self.max_length = max_length
+        self.vocab_size = vocab_size
+        self.expert_capacity = (
+            expert_capacity
+            if expert_capacity is not None
+            else int(max_length / num_experts * expert_capacity_multiplier)
+        )
+        self.expert_capacity_multiplier = expert_capacity_multiplier
         self.expert_activation = expert_activation
-
-        self.router_bias = router_bias
-        self.router_jitter = router_jitter
-        if router_dtype not in ["float32", "float16", "bfloat16"]:
-            raise ValueError(
-                f"`router_dtype` must be one of 'float32', 'float16' or 'bfloat16', got {router_dtype}"
-            )
-        self.router_dtype = router_dtype
-        self.router_ignore_padding_tokens = router_ignore_padding_tokens
-        self.add_router_probs = add_router_probs
         self.router_z_loss_coef = router_z_loss_coef
         self.router_aux_loss_coef = router_aux_loss_coef
-
-        self.hidden_dropout_rate = (
-            hidden_dropout_prob if hidden_dropout_prob is not None else dropout_prob
-        )
-        self.attn_dropout_rate = (
-            attention_probs_dropout_prob
-            if attention_probs_dropout_prob is not None
-            else dropout_prob
-        )
-        self.embedding_dropout_rate = (
-            embedding_dropout_prob
-            if embedding_dropout_prob is not None
-            else dropout_prob
-        )
+        self.alternate_sparsity = alternate_sparsity
+        self.router_top_k = router_top_k
+        self.router_bias = router_bias
+        self.router_jitter = router_jitter
+        self.router_dtype = router_dtype
+        self.router_ignore_padding_tokens = router_ignore_padding_tokens
+        self.attention_dropout = attention_dropout
+        self.expert_ffn_dropout = expert_ffn_dropout
+        self.token_embedding_dropout = token_embedding_dropout
         self.layer_norm_eps = layer_norm_eps
-        self.initializer_factor = initializer_factor
-
-        super().__init__(
-            pad_token_id=pad_token_id,
-            mask_token_id=mask_token_id,
-            **kwargs,
-        )
+        self.padding_idx = padding_idx
