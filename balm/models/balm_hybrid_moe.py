@@ -58,10 +58,8 @@ class BalmHybridMoEModel(nn.Module):
         num_shared_experts: int = 0,
         expert_activation: str = "gelu",
         expert_ffn_dropout: float = 0.0,
-        alternate_sparsity: bool = False,
         token_embedding_dropout: float = 0.0,
         attention_dropout: float = 0.0,
-        # attention_batch_first: bool = True,
         layer_norm_eps: float = 1e-5,
         router_dtype: str = "float32",
         router_top_k: int = 1,
@@ -76,7 +74,7 @@ class BalmHybridMoEModel(nn.Module):
         super().__init__()
         self.embed_tokens = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
         self.embed_positions = RelativePositionalEmbedding(embed_dim)
-        layers = nn.ModuleList(
+        self.layers = nn.ModuleList(
             [
                 HybridSparseTransformerLayer(
                     embed_dim=embed_dim,
@@ -99,6 +97,7 @@ class BalmHybridMoEModel(nn.Module):
                     router_class=router_class,
                     expert_class=expert_class,
                 )
+                for _ in range(num_layers)
             ]
         )
 
@@ -284,7 +283,6 @@ class BalmHybridMoEForMaskedLM(nn.Module):
             alternate_sparsity=alternate_sparsity,
             token_embedding_dropout=token_embedding_dropout,
             attention_dropout=attention_dropout,
-            # attention_batch_first=attention_batch_first,
             layer_norm_eps=layer_norm_eps,
             router_dtype=router_dtype,
             router_bias=router_bias,
