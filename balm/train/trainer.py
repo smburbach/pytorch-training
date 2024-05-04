@@ -22,6 +22,7 @@
 #
 
 
+import json
 import math
 import os
 import random
@@ -136,14 +137,19 @@ class Trainer:
             else f"{self.model.__class__.__name__}_{self.timestamp}"
         )
         # directories
-        self.output_dir = output_dir if output_dir is not None else "tmp_trainer"
+        self.output_dir = (
+            os.path.abspath(output_dir) if output_dir is not None else "tmp_trainer"
+        )
         os.makedirs(self.output_dir, exist_ok=True)
         self.logging_dir = (
-            logging_dir
+            os.path.abspath(logging_dir)
             if logging_dir is not None
             else os.path.join(self.output_dir, "log")
         )
         os.makedirs(self.logging_dir, exist_ok=True)
+        if self.save_steps is not None:
+            self.checkpoint_dir = os.path.join(self.output_dir, "checkpoints")
+            os.makedirs(self.checkpoint_dir, exist_ok=True)
 
     @cached_property
     def device(self):
@@ -280,7 +286,6 @@ class Trainer:
                     and self.eval_dataset is not None
                     and completed_steps % self.eval_steps == 0
                 ):
-                    # print("Evaluating")
                     eval_output = self.evaluate(compute_metrics=self.compute_metrics)
                     self.print_eval_log(eval_output, self.num_train_steps)
                     if self.use_wandb:
@@ -291,23 +296,26 @@ class Trainer:
                         for key, value in eval_output.metrics.items():
                             eval_log_dict[f"eval/{key}"] = value
                         wandb.log(eval_log_dict)
-                    # print(f"<<< EVAL >>> loss: {eval_output.loss:.4f}", end="")
-                    # if eval_output.metrics:
-                    #     for key, value in eval_output.metrics.items():
-                    #         print(f" | {key}: {value:.4f}", end="")
-                    # print("")
 
-                # save
+                # checkpoint
                 if (
                     self.save_steps is not None
                     and completed_steps % self.save_steps == 0
+                    and completed_steps < self.num_train_steps
                 ):
-                    print("Saving")
-                    #  TODO: save
+                    print("<< SAVING MODEL CHECKPOINT >>")
+                    checkpoint_name = f"{self.run_name}_steps={completed_steps}"
+                    checkpoint_path = os.path.join(self.checkpoint_dir, checkpoint_name)
+                    os.makedirs(checkpoint_path, exist_ok=True)
+                    self.save_model(checkpoint_path)
 
                 # done!
                 if completed_steps >= self.num_train_steps:
-                    print("Training complete")
+                    print("<< SAVING FINAL MODEL >>")
+                    save_path = os.path.join(self.output_dir, "model")
+                    os.makedirs(save_path, exist_ok=True)
+                    self.save_model(save_path)
+                    print("\nTraining complete")
                     break
         pbar.close()
 
@@ -406,6 +414,33 @@ class Trainer:
         )
 
         return eval_output
+
+    def save_model(self, save_directory):
+        """
+        Saves the model to the specified directory.
+
+        Parameters
+        ----------
+        save_directory : str
+            Directory to save the model.
+        """
+        os.makedirs(save_directory, exist_ok=True)
+        torch.save(self.model.state_dict(), os.path.join(save_directory, "model.pt"))
+        self.model.config.to_json(os.path.join(save_directory, "config.json"))
+        if self.optimizer is not None:
+            torch.save(
+                self.optimizer.state_dict(),
+                os.path.join(save_directory, "optimizer.pt"),
+            )
+        if self.scheduler is not None:
+            torch.save(
+                self.scheduler.state_dict(),
+                os.path.join(save_directory, "scheduler.pt"),
+            )
+        if self.data_collator.tokenizer is not None:
+            self.data_collator.tokenizer.to_json(
+                os.path.join(save_directory, "vocab.json")
+            )
 
     def wrap_model(self) -> Tuple[nn.Module, torch.optim.Optimizer]:
         if self.deepspeed:
