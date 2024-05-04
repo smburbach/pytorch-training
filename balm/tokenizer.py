@@ -242,6 +242,22 @@ class Tokenizer(TokenizerBase):
     def to_dict(self):
         return self.tok_to_idx.copy()
 
+    def to_json(self, output: Optional[str] = None):
+        """
+        Save the tokenizer to a JSON file.
+
+        Parameters
+        ----------
+        output : str, optional
+            The path to the JSON file to save the tokenizer to. If None, the tokenizer is returned as a JSON string.
+        """
+        json_string = json.dumps(self.tok_to_idx)
+        if output is not None:
+            with open(output, "w") as f:
+                f.write(json_string)
+        else:
+            return json_string
+
     def _tokenize(self, text: str) -> Iterable[str]:
         return text.split()
 
@@ -350,20 +366,11 @@ class Tokenizer(TokenizerBase):
             encoded = [self._encode(text, **all_kwargs)]
         # batched inputs
         else:
-            # n_procs = min(len(text), mp.cpu_count())
-            # with ProcessPoolExecutor(max_workers=n_procs) as executor:
-            #     futures = [
-            #         executor.submit(self._encode, txt, **all_kwargs) for txt in text
-            #     ]
-            #     encoded = []
-            #     for future in tqdm(as_completed(futures), total=len(futures)):
-            #         encoded.append(future.result())
             n_procs = min(len(text), mp.cpu_count())
-            # Initialize tqdm progress bar here
+            # init progress bar before launching ProcessPoolExecutor
             progress_bar = tqdm(
                 total=len(text),
                 desc="Encoding",
-                # unit="text",
             )
             with ProcessPoolExecutor(max_workers=n_procs) as executor:
                 futures = {
@@ -374,10 +381,8 @@ class Tokenizer(TokenizerBase):
                 for future in as_completed(futures):
                     result = future.result()
                     encoded.append(result)
-                    # Update the progress bar each time a future is completed
                     progress_bar.update(1)
             progress_bar.close()
-            # encoded = [f.result() for f in as_completed(futures)]
         encoded = [torch.tensor(e) for e in encoded]
         results_dict = {
             "input_ids": encoded,
