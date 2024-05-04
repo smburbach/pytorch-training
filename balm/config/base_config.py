@@ -33,7 +33,8 @@ class BaseConfig:
         Parameters
         ----------
         output : str, optional
-            The path to the JSON file to save the config to. If None, the config is returned as a JSON string.
+            The path to the JSON file to save the config to.
+            If None, the config is returned as a JSON string.
         """
         json_string = json.dumps(self.__dict__)
         if output is not None:
@@ -47,3 +48,7 @@ class BaseConfig:
         with open(json_path, "r") as f:
             json_string = f.read()
         return cls(**json.loads(json_string))
+
+    @classmethod
+    def from_dict(cls, config: dict):
+        return cls(**config)

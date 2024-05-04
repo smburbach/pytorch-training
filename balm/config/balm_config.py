@@ -22,7 +22,7 @@
 #
 
 
-from .base import BaseConfig
+from .base_config import BaseConfig
 
 
 class BalmConfig(BaseConfig):
@@ -68,7 +68,7 @@ class BalmConfig(BaseConfig):
             The vocabulary size.
 
         dropout : float, default=0.1
-            The dropout rate.
+            The dropout rate. Applied immediately before adding the residual connection.
 
         attention_dropout : float, default=0.0
             The dropout rate for the attention layer.
