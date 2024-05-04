@@ -36,6 +36,10 @@ class BalmBase(nn.Module):
     def __init__(self):
         super().__init__()
 
+    @property
+    def num_parameters(self):
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
     @classmethod
     def from_pretrained(cls, model_path: str):
         """
