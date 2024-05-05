@@ -39,6 +39,7 @@ class BalmExpertChoiceMoEConfig(BaseConfig):
         vocab_size: int = 33,
         expert_capacity: Optional[int] = None,
         expert_capacity_multiplier: float = 1.5,
+        num_shared_experts: int = 0,
         expert_activation: str = "gelu",
         router_z_loss_coef: float = 0.001,
         alternate_sparsity: bool = False,
@@ -141,6 +142,7 @@ class BalmExpertChoiceMoEConfig(BaseConfig):
             else int(max_length / num_experts * expert_capacity_multiplier)
         )
         self.expert_capacity_multiplier = expert_capacity_multiplier
+        self.num_shared_experts = num_shared_experts
         self.expert_activation = expert_activation
         self.router_z_loss_coef = router_z_loss_coef
         self.alternate_sparsity = alternate_sparsity
