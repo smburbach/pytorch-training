@@ -48,6 +48,7 @@ class BalmExpertChoiceMoEConfig(BaseConfig):
         router_jitter: float = 0.0,
         router_dtype: str = "float32",
         router_ignore_padding_tokens: bool = True,
+        dropout: float = 0.1,
         attention_dropout: float = 0.0,
         expert_ffn_dropout: float = 0.0,
         token_embedding_dropout: float = 0.0,
@@ -151,6 +152,7 @@ class BalmExpertChoiceMoEConfig(BaseConfig):
         self.router_jitter = router_jitter
         self.router_dtype = router_dtype
         self.router_ignore_padding_tokens = router_ignore_padding_tokens
+        self.dropout = dropout
         self.attention_dropout = attention_dropout
         self.expert_ffn_dropout = expert_ffn_dropout
         self.token_embedding_dropout = token_embedding_dropout
