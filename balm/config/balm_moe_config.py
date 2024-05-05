@@ -38,7 +38,7 @@ class BalmMoEConfig(BaseConfig):
         max_length: int = 320,
         vocab_size: int = 33,
         expert_capacity: Optional[int] = None,
-        expert_capacity_multiplier: float = 1.25,
+        expert_capacity_multiplier: float = 1.5,
         num_shared_experts: int = 0,
         expert_activation: str = "gelu",
         router_z_loss_coef: float = 0.001,
