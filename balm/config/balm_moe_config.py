@@ -39,6 +39,7 @@ class BalmMoEConfig(BaseConfig):
         vocab_size: int = 33,
         expert_capacity: Optional[int] = None,
         expert_capacity_multiplier: float = 1.25,
+        num_shared_experts: int = 0,
         expert_activation: str = "gelu",
         router_z_loss_coef: float = 0.001,
         router_aux_loss_coef: float = 0.001,
@@ -48,6 +49,7 @@ class BalmMoEConfig(BaseConfig):
         router_jitter: float = 0.0,
         router_dtype: str = "float32",
         router_ignore_padding_tokens: bool = True,
+        dropout: float = 0.1,
         attention_dropout: float = 0.0,
         expert_ffn_dropout: float = 0.0,
         token_embedding_dropout: float = 0.0,
@@ -86,6 +88,9 @@ class BalmMoEConfig(BaseConfig):
         expert_capacity_multiplier : float, default=1.25
             The multiplier for the expert capacity.
 
+        num_shared_experts : int, default=0
+            The number of shared experts in the transformer.
+
         expert_activation : str, default="gelu"
             The activation function to use for the experts. Options are "relu" and "gelu".
 
@@ -113,11 +118,14 @@ class BalmMoEConfig(BaseConfig):
         router_ignore_padding_tokens : bool, default=True
             Whether to ignore padding tokens for the router.
 
+        dropout : float, default=0.1
+            The dropout to use for the transformer.
+
         attention_dropout : float, default=0.0
             The dropout to use for the attention.
 
         expert_ffn_dropout : float, default=0.0
-            The dropout to use for the expert feed-forward network.
+            The dropout to use for the experts.
 
         token_embedding_dropout : float, default=0.0
             The dropout to use for the token embeddings.
@@ -142,6 +150,7 @@ class BalmMoEConfig(BaseConfig):
             else int(max_length / num_experts * expert_capacity_multiplier)
         )
         self.expert_capacity_multiplier = expert_capacity_multiplier
+        self.num_shared_experts = num_shared_experts
         self.expert_activation = expert_activation
         self.router_z_loss_coef = router_z_loss_coef
         self.router_aux_loss_coef = router_aux_loss_coef
@@ -151,6 +160,7 @@ class BalmMoEConfig(BaseConfig):
         self.router_jitter = router_jitter
         self.router_dtype = router_dtype
         self.router_ignore_padding_tokens = router_ignore_padding_tokens
+        self.dropout = dropout
         self.attention_dropout = attention_dropout
         self.expert_ffn_dropout = expert_ffn_dropout
         self.token_embedding_dropout = token_embedding_dropout
