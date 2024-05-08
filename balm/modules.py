@@ -32,31 +32,7 @@ from .embedding import RotaryPositionalEmbeddings
 from .router import TopKRouter
 
 
-class MaskedLMOutput:
-    def __init__(
-        self,
-        logits: Optional[torch.Tensor] = None,
-        loss: Optional[torch.Tensor] = None,
-        hidden_states: Optional[torch.Tensor] = None,
-        attentions: Optional[torch.Tensor] = None,
-        last_hidden_state: Optional[torch.Tensor] = None,
-        lm_loss: Optional[torch.Tensor] = None,
-        router_logits: Optional[torch.Tensor] = None,
-        router_z_loss: Optional[torch.Tensor] = None,
-        router_aux_loss: Optional[torch.Tensor] = None,
-        expert_indices: Optional[torch.Tensor] = None,
-    ):
-        self.logits = logits
-        self.loss = loss
-        self.hidden_states = hidden_states
-        self.attentions = attentions
-        self.last_hidden_state = last_hidden_state
-        self.lm_loss = lm_loss
-        self.router_logits = router_logits
-        self.router_z_loss = router_z_loss
-        self.router_aux_loss = router_aux_loss
-        self.expert_indices = expert_indices
-
+class OutputBase:
     def __getitem__(self, idx):
         if isinstance(idx, str) and hasattr(self, idx):
             return getattr(self, idx)
@@ -79,6 +55,60 @@ class MaskedLMOutput:
 
     def as_dict(self):
         return {k: v for k, v in self.__dict__.items() if v is not None}
+
+
+class MaskedLMOutput(OutputBase):
+    def __init__(
+        self,
+        logits: Optional[torch.Tensor] = None,
+        loss: Optional[torch.Tensor] = None,
+        hidden_states: Optional[torch.Tensor] = None,
+        attentions: Optional[torch.Tensor] = None,
+        last_hidden_state: Optional[torch.Tensor] = None,
+        lm_loss: Optional[torch.Tensor] = None,
+        router_logits: Optional[torch.Tensor] = None,
+        router_z_loss: Optional[torch.Tensor] = None,
+        router_aux_loss: Optional[torch.Tensor] = None,
+        expert_indices: Optional[torch.Tensor] = None,
+    ):
+        super().__init__()
+        self.logits = logits
+        self.loss = loss
+        self.hidden_states = hidden_states
+        self.attentions = attentions
+        self.last_hidden_state = last_hidden_state
+        self.lm_loss = lm_loss
+        self.router_logits = router_logits
+        self.router_z_loss = router_z_loss
+        self.router_aux_loss = router_aux_loss
+        self.expert_indices = expert_indices
+
+
+class ClassifierOutput:
+    def __init__(
+        self,
+        logits: Optional[torch.Tensor] = None,
+        loss: Optional[torch.Tensor] = None,
+        hidden_states: Optional[torch.Tensor] = None,
+        attentions: Optional[torch.Tensor] = None,
+        last_hidden_state: Optional[torch.Tensor] = None,
+        classifier_loss: Optional[torch.Tensor] = None,
+        router_logits: Optional[torch.Tensor] = None,
+        router_z_loss: Optional[torch.Tensor] = None,
+        router_aux_loss: Optional[torch.Tensor] = None,
+        expert_indices: Optional[torch.Tensor] = None,
+    ):
+        super().__init__()
+        self.logits = logits
+        self.loss = loss
+        self.hidden_states = hidden_states
+        self.attentions = attentions
+        self.last_hidden_state = last_hidden_state
+        self.classifier_loss = classifier_loss
+        self.router_logits = router_logits
+        self.router_z_loss = router_z_loss
+        self.router_aux_loss = router_aux_loss
+        self.expert_indices = expert_indices
 
 
 class TransformerLayer(nn.Module):
@@ -298,6 +328,41 @@ class BalmLMHead(nn.Module):
         return x
 
 
+class BalmClassificationHead(nn.Module):
+    def __init__(
+        self,
+        embed_dim: int,
+        num_labels: int,
+        dropout: float = 0.0,
+        activation: str = "tanh",
+    ):
+        super().__init__()
+        self.dense = nn.Linear(embed_dim, embed_dim)
+        self.dropout = nn.Dropout(dropout)
+        self.out_proj = nn.Linear(embed_dim, num_labels)
+
+        # activation
+        if activation.lower() == "gelu":
+            self.activation = nn.GELU()
+        elif activation.lower() == "relu":
+            self.activation = nn.ReLU()
+        elif activation.lower() == "tanh":
+            self.activation = nn.Tanh()
+        else:
+            raise ValueError(
+                f"Invalid activation function: {activation}. Valid options are 'gelu', 'relu', 'tanh'."
+            )
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        x = features[:, 0, :]  # first token (<s> or <cls>) is the seq representative
+        x = self.dropout(x)
+        x = self.dense(x)
+        x = self.activation(x)
+        x = self.dropout(x)
+        x = self.out_proj(x)
+        return x
+
+
 class Expert(nn.Module):
     """
     Expert module for a Sparse Transformer layer.
@@ -314,7 +379,7 @@ class Expert(nn.Module):
         Dropout rate. The default is ``0.0``.
 
     activation : str, optional
-        Activation function to use. One of "relu" or "gelu". The default is "gelu".
+        Activation function to use. One of "swiglu", "relu", or "gelu". The default is "gelu".
     """
 
     def __init__(
@@ -325,10 +390,18 @@ class Expert(nn.Module):
         activation: str = "gelu",
     ):
         super().__init__()
+        if activation.lower() == "swiglu":
+            out_ffn_dim = ffn_dim // 2
+            self.activation = SwiGLU()
+        elif activation.lower() == "gelu":
+            out_ffn_dim = ffn_dim
+            self.activation = nn.GELU()
+        else:
+            out_ffn_dim = ffn_dim
+            self.activation = nn.ReLU()
         self.wi = nn.Linear(embed_dim, ffn_dim, bias=False)
-        self.wo = nn.Linear(ffn_dim, embed_dim, bias=False)
+        self.wo = nn.Linear(out_ffn_dim, embed_dim, bias=False)
         self.dropout = nn.Dropout(dropout_rate)
-        self.activation = nn.GELU() if activation.lower() == "gelu" else nn.ReLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -747,6 +820,8 @@ class SparseRoformerLayer(nn.Module):
         num_experts: int,
         max_len: int,
         expert_capacity: int,
+        num_shared_experts: int = 0,
+        top_k: int = 1,
         expert_activation: str = "gelu",
         dropout: float = 0.1,
         attention_dropout: float = 0.0,
@@ -776,7 +851,9 @@ class SparseRoformerLayer(nn.Module):
             embed_dim=embed_dim,
             ffn_dim=ffn_dim,
             num_experts=num_experts,
+            num_shared_experts=num_shared_experts,
             expert_capacity=expert_capacity,
+            top_k=top_k,
             expert_activation=expert_activation,
             expert_ffn_dropout=expert_ffn_dropout,
             router_dtype=router_dtype,
