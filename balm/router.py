@@ -64,7 +64,9 @@ class RouterBase(nn.Module):
         raise NotImplementedError
 
     def _compute_router_probabilities(
-        self, x: torch.Tensor
+        self,
+        x: torch.Tensor,
+        dim: int = -1,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Computes router probabilities from input hidden states.
@@ -74,6 +76,10 @@ class RouterBase(nn.Module):
         x : torch.Tensor
             Tensor of shape (batch_size, sequence_length, hidden_dim) from which
             router probabilities are computed.
+
+        dim : int, optional
+            Dimension along which to compute the softmax. The default is -1, which corresponds
+            to token-choice routing. For expert choice routing, this should be -2.
 
         Returns:
         --------
@@ -97,7 +103,9 @@ class RouterBase(nn.Module):
         logits = self.classifier(x)
 
         # apply softmax and cast back to the original dtype
-        probabilities = F.softmax(logits, dim=-1, dtype=self.dtype).to(self.input_dtype)
+        probabilities = F.softmax(logits, dim=dim, dtype=self.dtype).to(
+            self.input_dtype
+        )
         return probabilities, logits
 
 
@@ -107,7 +115,8 @@ class TopKRouter(RouterBase):
     replicates the top-1 routing strategy introduced in the `Switch Transformers`_ paper.
     Alternatively, if k=2, this replicates the top-2 routing strategy introduced in the `GShard`_
     paper. Tokens are routed to their expert of choice until the expert's `expert_capacity` is
-    reached.
+    reached. Shared experts, which process all tokens, are implemented as described in the
+    `DeepSeqMoE`_ paper.
 
     .. note::
         There is no guarantee that each token will be processed by an expert,
@@ -128,6 +137,12 @@ class TopKRouter(RouterBase):
     expert_capacity : int
         Maximum number of tokens that can be routed to each expert.
 
+    top_k : int, optional
+        Number of top experts to route each token to. The default is 1.
+
+    num_shared_experts : int, optional
+        Number of shared experts that process all tokens. The default is 0.
+
     dtype : str, optional
         Data type to use for router probabilities. The default is "float32".
 
@@ -147,6 +162,9 @@ class TopKRouter(RouterBase):
 
     .. _GShard:
         https://arxiv.org/abs/2006.16668
+
+    .. _DeepSeqMoE:
+        https://arxiv.org/abs/2401.06066
     """
 
     def __init__(
@@ -155,6 +173,7 @@ class TopKRouter(RouterBase):
         num_experts: int,
         expert_capacity: int,
         top_k: int = 1,
+        num_shared_experts: int = 0,
         dtype: str = "float32",
         bias: bool = False,
         jitter: float = 0.0,
@@ -168,29 +187,28 @@ class TopKRouter(RouterBase):
             dtype=dtype,
             bias=bias,
             jitter=jitter,
+            num_routable_experts=num_experts - num_shared_experts,
         )
         self.top_k = top_k
+        self.num_shared_experts = num_shared_experts
         self.ignore_padding_tokens = ignore_padding_tokens
 
     def forward(
         self, x: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Route tokens to top-k experts.
+        Token choice of top-k experts, with optional shared experts processing all tokens.
 
         Parameters:
         -----------
         x : torch.Tensor
             Input tensor of shape (batch_size, sequence_length, embed_dim).
 
-        top_k : int
-            Number of top experts to route each token to.
-
         Returns:
         --------
-        expert_indices : torch.Tensor
-            Tensor of shape (batch_size, sequence_length, num_experts) indicating
-            which experts the token should be routed to.
+        expert_mask : torch.Tensor
+            Binary mask tensor of shape (batch_size, sequence_length, num_experts)
+            indicating which experts the token should be routed to (including shared experts).
 
         router_probabilities : torch.Tensor
             Tensor of shape (batch_size, sequence_length, num_experts) containing
@@ -202,24 +220,74 @@ class TopKRouter(RouterBase):
         """
         router_probs, router_logits = self._compute_router_probabilities(x)
         top_k_values, top_k_indices = torch.topk(router_probs, k=self.top_k, dim=-1)
-        expert_indices = F.one_hot(top_k_indices, num_classes=self.num_experts).sum(
-            dim=-2
-        )
+        expert_mask = F.one_hot(top_k_indices, num_classes=self.num_experts).sum(dim=-2)
+        # expert_values = torch.zeros_like(
+        #     expert_mask, dtype=top_k_values.dtype
+        # ).scatter_(-1, top_k_indices, top_k_values)
 
         # mask tokens if their desired experts are above capacity
-        token_priority = torch.cumsum(expert_indices, dim=-2)
+        token_priority = torch.cumsum(expert_mask, dim=-2)
         expert_capacity_mask = token_priority <= self.expert_capacity
-        expert_indices = expert_indices * expert_capacity_mask
+        expert_mask = expert_mask * expert_capacity_mask
 
         # get the probabilities of the top-choice experts for each token
-        router_probs = top_k_values * expert_indices
+        # router_probs = expert_values * expert_mask
 
-        return expert_indices, router_probs, router_logits
+        # Add shared experts processing all tokens
+        if self.num_shared_experts > 0:
+            shared_expert_mask = torch.ones_like(
+                router_probs[..., : self.num_shared_experts]
+            )
+            expert_mask = torch.cat((shared_expert_mask, expert_mask), dim=-1)
+
+        return expert_mask, router_probs, router_logits
 
 
 class ExpertChoiceRouter(RouterBase):
     """
-    Router that selects top-k tokens for each expert and has shared experts that process all tokens.
+    This router uses the "expert choice of top-k tokens" strategy, as originally described
+    in the `Mixture-of-Experts with Expert Choice Routing`_ paper. This automatically
+    balances the number of tokens processed by each expert, and eliminates the
+    need for an auxiliary (load-balancing) router loss.
+
+    .. note::
+        There is no guarantee that each token will be processed by an expert. In fact,
+        one of the primary benefits of expert choice routing is thought to be their
+        ability to heterogeneously devote computation to a subset of highly complex/difficult
+        tokens.
+
+    If tokens are not selected by an expert, their hidden states are passed to the
+    subsequent layer unchanged.
+
+    Parameters:
+    -----------
+    embed_dim : int
+        Embedding dimension.
+
+    num_experts : int
+        Number of experts.
+
+    expert_capacity : int
+        Maximum number of tokens that can be routed to each expert.
+
+    num_shared_experts : int, optional
+        Number of shared experts that process all tokens. The default is 0.
+
+    dtype : str, optional
+        Data type to use for router probabilities. The default is "float32".
+
+    bias : bool, optional
+        Whether to add bias to the router classifier. The default is ``False``.
+
+    jitter : float, optional
+        Amount of jitter to add to the router probabilities. The default is ``0.0``.
+
+    ignore_padding_tokens : bool, optional
+        Whether to ignore padding tokens when computing router probabilities.
+        The default is ``True``.
+
+    .. _Mixture-of-Experts with Expert Choice Routing:
+        https://arxiv.org/abs/2202.09368
     """
 
     def __init__(
@@ -227,7 +295,7 @@ class ExpertChoiceRouter(RouterBase):
         embed_dim: int,
         num_experts: int,
         expert_capacity: int,
-        num_shared_experts: int = 1,  # Number of shared experts
+        num_shared_experts: int = 0,
         dtype: str = "float32",
         bias: bool = False,
         jitter: float = 0.0,
@@ -250,7 +318,7 @@ class ExpertChoiceRouter(RouterBase):
         self, x: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Route tokens to experts, selecting top-k tokens for each expert, and route all tokens to shared experts.
+        Expert choice of top-k tokens, with optional shared experts that process all tokens.
 
         Parameters:
         -----------
@@ -271,7 +339,7 @@ class ExpertChoiceRouter(RouterBase):
             Tensor of shape (batch_size, sequence_length, num_experts) containing
             the router logits.
         """
-        router_probs, router_logits = self._compute_router_probabilities(x)
+        router_probs, router_logits = self._compute_router_probabilities(x, dim=-2)
         expert_mask = torch.zeros_like(router_probs)
 
         # Select top-k tokens for each expert
@@ -279,10 +347,10 @@ class ExpertChoiceRouter(RouterBase):
             _, top_k_indices = torch.topk(
                 router_probs[..., i], k=self.expert_capacity, dim=1
             )
-            expert_mask.scatter_(1, top_k_indices.unsqueeze(-1), 1, reduce="add")
+            expert_mask[:, :, i].scatter_(1, top_k_indices, 1)
 
         # Ensure that the mask is binary
-        expert_mask = expert_mask.clamp(max=1)
+        # expert_mask = expert_mask.clamp(max=1)
 
         # Add shared experts processing all tokens
         if self.num_shared_experts > 0:
