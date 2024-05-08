@@ -88,7 +88,6 @@ class BalmHybridMoEModel(nn.Module):
                     expert_activation=expert_activation,
                     expert_ffn_dropout=expert_ffn_dropout,
                     attention_dropout=attention_dropout,
-                    # attention_batch_first=attention_batch_first,
                     layer_norm_eps=layer_norm_eps,
                     router_dtype=router_dtype,
                     router_bias=router_bias,
@@ -103,8 +102,6 @@ class BalmHybridMoEModel(nn.Module):
 
         self.embedding_dropout = nn.Dropout(token_embedding_dropout)
         self.final_norm = nn.LayerNorm(embed_dim)
-
-        # self.attention_batch_first = attention_batch_first
 
     @property
     def num_parameters(self):
