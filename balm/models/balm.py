@@ -28,7 +28,13 @@ import torch
 import torch.nn as nn
 
 from ..config import BalmConfig
-from ..modules import BalmLMHead, MaskedLMOutput, RoformerLayer
+from ..modules import (
+    BalmClassificationHead,
+    BalmLMHead,
+    ClassifierOutput,
+    MaskedLMOutput,
+    RoformerLayer,
+)
 from .base import BalmBase
 
 
@@ -174,6 +180,100 @@ class BalmForMaskedLM(BalmBase):
         output = MaskedLMOutput(
             logits=logits,
             loss=masked_lm_loss,
+        )
+        if output_attentions:
+            output.attentions = attn
+        if output_hidden_states:
+            output.hidden_states = x
+        if return_dict:
+            return output.as_dict()
+        return output.as_tuple()
+
+
+class BalmForSequenceClassification(BalmBase):
+    config_cls = BalmConfig
+
+    def __init__(
+        self,
+        config: BalmConfig,
+    ):
+        """
+        BALM model for masked language modeling. Uses the base BALM model with rotary
+        embeddings, pre-norm, and SwiGLU activations, and adds a language modeling head.
+
+        Parameters
+        ----------
+        config : BalmConfig
+            The configuration object defining model architecture and hyperparameters.
+
+        """
+        super().__init__(config)
+        # model
+        self.balm = BalmModel(config=self.config)
+
+        # classifier
+        classifier_dropout = (
+            self.config.classifier_dropout
+            if self.config.classifier_dropout is not None
+            else self.config.dropout
+        )
+        classifier_activation = (
+            self.config.classifier_activation
+            if self.config.classifier_activation is not None
+            else "tanh"
+        )
+        self.classifier = BalmClassificationHead(
+            embed_dim=self.config.embed_dim,
+            num_labels=self.config.num_labels,
+            dropout=classifier_dropout,
+            activation=classifier_activation,
+        )
+
+        # loss
+        self.criterion = nn.CrossEntropyLoss(ignore_index=-100)
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        output_attentions: bool = False,
+        output_hidden_states: bool = False,
+        return_dict: bool = True,
+    ) -> MaskedLMOutput:
+        """
+        Parameters
+        ----------
+
+        x : torch.Tensor
+            The input tensor. Expected shape is (batch_size, seq_len).
+
+        Returns
+        -------
+        torch.Tensor
+            The output tensor. The shape is (batch_size, seq_len, vocab_size).
+        """
+        x = self.balm(
+            input_ids,
+            attention_mask=attention_mask,
+            key_padding_mask=key_padding_mask,
+            need_weights=output_attentions,
+        )
+        if output_attentions:
+            x, attn = x
+        logits = self.classifier(x)
+
+        classifier_loss = None
+        if labels is not None:
+            classifier_loss = self.criterion(
+                logits.view(-1, logits.size(-1)),
+                labels.view(-1),
+            )
+
+        output = ClassifierOutput(
+            logits=logits,
+            loss=classifier_loss,
         )
         if output_attentions:
             output.attentions = attn
