@@ -32,7 +32,7 @@ from ..modules import BalmLMHead, Expert, MaskedLMOutput, SparseRoformerLayer
 from ..router import TopKRouter
 
 
-class BalmMoERoPE(nn.Module):
+class BalmMoERoPEModel(nn.Module):
     """
     BALM Mixture of Experts model.
     """
@@ -47,18 +47,18 @@ class BalmMoERoPE(nn.Module):
         expert_capacity: int,
         vocab_size: int,
         max_length: int = 320,
+        num_shared_experts: int = 0,
         expert_activation: str = "gelu",
         expert_ffn_dropout: float = 0.0,
-        ffn_dropout: float = 0.0,
+        dropout: float = 0.0,
         token_embedding_dropout: float = 0.0,
         attention_dropout: float = 0.0,
-        attention_batch_first: bool = True,
+        # attention_batch_first: bool = True,
         layer_norm_eps: float = 1e-5,
         router_dtype: str = "float32",
         router_bias: bool = False,
         router_jitter: float = 0.0,
         router_ignore_padding_tokens: bool = True,
-        position_embedding_type: str = "relative_key_query",
         padding_idx: int = 0,
         router_class: nn.Module = TopKRouter,
         expert_class: nn.Module = Expert,
@@ -74,12 +74,12 @@ class BalmMoERoPE(nn.Module):
                     num_heads=num_heads,
                     num_experts=num_experts,
                     max_len=max_length,
+                    num_shared_experts=num_shared_experts,
                     expert_capacity=expert_capacity,
                     expert_activation=expert_activation,
                     expert_ffn_dropout=expert_ffn_dropout,
-                    ffn_dropout=ffn_dropout,
+                    dropout=dropout,
                     attention_dropout=attention_dropout,
-                    # attention_batch_first=attention_batch_first,
                     layer_norm_eps=layer_norm_eps,
                     router_dtype=router_dtype,
                     router_bias=router_bias,
@@ -158,7 +158,7 @@ class BalmMoERoPE(nn.Module):
         x = self.embedding_dropout(x)
 
         # encoder
-        x = x.transpose(0, 1)
+        # x = x.transpose(0, 1)
         for layer_idx, layer in enumerate(self.layers, 1):
             x = layer(
                 x,
@@ -177,9 +177,10 @@ class BalmMoERoPE(nn.Module):
             router_logits.append(router_tuple[0])
             expert_indexes.append(router_tuple[1])
             if output_hidden_states:
-                hidden_states[layer_idx] = x.transpose(0, 1)
+                # hidden_states[layer_idx] = x.transpose(0, 1)
+                hidden_states[layer_idx] = x
         x = self.final_norm(x)
-        x = x.transpose(0, 1)
+        # x = x.transpose(0, 1)
 
         # Compute the router losses (z_loss + auxiliary loss)
         cat_router_logits = torch.cat(router_logits, dim=1)
@@ -223,11 +224,12 @@ class BalmMoERoPEForMaskedLM(nn.Module):
         expert_capacity: int,
         vocab_size: int,
         max_length: int = 320,
+        num_shared_experts: int = 0,
         expert_activation: str = "gelu",
+        dropout: float = 0.1,
         expert_ffn_dropout: float = 0.0,
         token_embedding_dropout: float = 0.0,
         attention_dropout: float = 0.0,
-        attention_batch_first: bool = True,
         layer_norm_eps: float = 1e-5,
         router_dtype: str = "float32",
         router_bias: bool = False,
@@ -235,13 +237,13 @@ class BalmMoERoPEForMaskedLM(nn.Module):
         router_ignore_padding_tokens: bool = True,
         router_z_loss_coef: float = 0.001,
         router_aux_loss_coef: float = 0.001,
-        position_embedding_type: str = "relative_key_query",
+        # position_embedding_type: str = "relative_key_query",
         padding_idx: int = 0,
         router_class: nn.Module = TopKRouter,
         expert_class: nn.Module = Expert,
     ):
         super().__init__()
-        self.balm = BalmMoERoPE(
+        self.balm = BalmMoERoPEModel(
             embed_dim=embed_dim,
             ffn_dim=ffn_dim,
             num_layers=num_layers,
@@ -250,16 +252,18 @@ class BalmMoERoPEForMaskedLM(nn.Module):
             expert_capacity=expert_capacity,
             vocab_size=vocab_size,
             max_length=max_length,
+            num_shared_experts=num_shared_experts,
             expert_activation=expert_activation,
+            dropout=dropout,
             expert_ffn_dropout=expert_ffn_dropout,
             token_embedding_dropout=token_embedding_dropout,
             attention_dropout=attention_dropout,
-            attention_batch_first=attention_batch_first,
             layer_norm_eps=layer_norm_eps,
             router_dtype=router_dtype,
             router_bias=router_bias,
             router_jitter=router_jitter,
-            position_embedding_type=position_embedding_type,
+            router_ignore_padding_tokens=router_ignore_padding_tokens,
+            # position_embedding_type=position_embedding_type,
             padding_idx=padding_idx,
             router_class=router_class,
             expert_class=expert_class,
