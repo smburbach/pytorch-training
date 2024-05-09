@@ -95,16 +95,16 @@ class BalmConfig(BaseConfig):
             The index of the padding token.
         """
         super().__init__()
-        self.embed_dim = embed_dim
-        self.ffn_dim = ffn_dim
-        self.num_layers = num_layers
-        self.num_heads = num_heads
-        self.num_experts = num_experts
-        self.max_length = max_length
-        self.vocab_size = vocab_size
-        self.dropout = dropout
-        self.attention_dropout = attention_dropout
-        self.token_embedding_dropout = token_embedding_dropout
+        self.embed_dim = int(embed_dim)
+        self.ffn_dim = int(ffn_dim)
+        self.num_layers = int(num_layers)
+        self.num_heads = int(num_heads)
+        self.num_experts = int(num_experts)
+        self.max_length = int(max_length)
+        self.vocab_size = int(vocab_size)
+        self.dropout = float(dropout)
+        self.attention_dropout = float(attention_dropout)
+        self.token_embedding_dropout = float(token_embedding_dropout)
         if positional_embedding_type.lower() not in ["rotary", "relative"]:
             raise ValueError(
                 f"Invalid positional embedding type: {positional_embedding_type}. Options are 'rotary' or 'relative'."
@@ -115,6 +115,6 @@ class BalmConfig(BaseConfig):
                 f"Invalid FFN activation: {activation}. Options are 'swiglu', 'relu', or 'gelu'."
             )
         self.activation = activation.lower()
-        self.pre_norm = pre_norm
-        self.layer_norm_eps = layer_norm_eps
-        self.padding_idx = padding_idx
+        self.pre_norm = bool(pre_norm)
+        self.layer_norm_eps = float(layer_norm_eps)
+        self.padding_idx = int(padding_idx)

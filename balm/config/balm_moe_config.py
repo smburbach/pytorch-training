@@ -43,8 +43,8 @@ class BalmMoEConfig(BaseConfig):
         activation: str = "swiglu",
         positional_embedding_type: str = "rotary",
         pre_norm: bool = True,
-        router_z_loss_coef: float = 0.001,
-        router_aux_loss_coef: float = 0.001,
+        router_z_loss_coef: float = 1e-3,
+        router_aux_loss_coef: float = 1e-2,
         alternate_sparsity: bool = False,
         router_top_k: int = 1,
         router_bias: bool = False,
@@ -140,20 +140,20 @@ class BalmMoEConfig(BaseConfig):
             The index to use for the padding tokens.
         """
         super().__init__()
-        self.embed_dim = embed_dim
-        self.ffn_dim = ffn_dim
-        self.num_layers = num_layers
-        self.num_heads = num_heads
-        self.num_experts = num_experts
-        self.max_length = max_length
-        self.vocab_size = vocab_size
+        self.embed_dim = int(embed_dim)
+        self.ffn_dim = int(ffn_dim)
+        self.num_layers = int(num_layers)
+        self.num_heads = int(num_heads)
+        self.num_experts = int(num_experts)
+        self.max_length = int(max_length)
+        self.vocab_size = int(vocab_size)
+        self.expert_capacity_multiplier = float(expert_capacity_multiplier)
         self.expert_capacity = (
-            expert_capacity
+            int(expert_capacity)
             if expert_capacity is not None
-            else int(max_length / num_experts * expert_capacity_multiplier)
+            else int(max_length / num_experts * self.expert_capacity_multiplier)
         )
-        self.expert_capacity_multiplier = expert_capacity_multiplier
-        self.num_shared_experts = num_shared_experts
+        self.num_shared_experts = int(num_shared_experts)
         if positional_embedding_type.lower() not in ["rotary", "relative"]:
             raise ValueError(
                 f"Invalid positional embedding type: {positional_embedding_type}. Options are 'rotary' or 'relative'."
@@ -164,19 +164,19 @@ class BalmMoEConfig(BaseConfig):
                 f"Invalid FFN activation: {activation}. Options are 'swiglu', 'relu', or 'gelu'."
             )
         self.activation = activation.lower()
-        self.pre_norm = pre_norm
-        self.router_z_loss_coef = router_z_loss_coef
-        self.router_aux_loss_coef = router_aux_loss_coef
+        self.pre_norm = bool(pre_norm)
+        self.router_z_loss_coef = float(router_z_loss_coef)
+        self.router_aux_loss_coef = float(router_aux_loss_coef)
         self.alternate_sparsity = alternate_sparsity
-        self.router_top_k = router_top_k
-        self.router_bias = router_bias
-        self.router_jitter = router_jitter
-        self.router_dtype = router_dtype
-        self.router_ignore_padding_tokens = router_ignore_padding_tokens
-        self.expert_choice_router = expert_choice_router
-        self.dropout = dropout
-        self.attention_dropout = attention_dropout
-        self.expert_ffn_dropout = expert_ffn_dropout
-        self.token_embedding_dropout = token_embedding_dropout
-        self.layer_norm_eps = layer_norm_eps
-        self.padding_idx = padding_idx
+        self.router_top_k = int(router_top_k)
+        self.router_bias = bool(router_bias)
+        self.router_jitter = float(router_jitter)
+        self.router_dtype = router_dtype.lower()
+        self.router_ignore_padding_tokens = bool(router_ignore_padding_tokens)
+        self.expert_choice_router = bool(expert_choice_router)
+        self.dropout = float(dropout)
+        self.attention_dropout = float(attention_dropout)
+        self.expert_ffn_dropout = float(expert_ffn_dropout)
+        self.token_embedding_dropout = float(token_embedding_dropout)
+        self.layer_norm_eps = float(layer_norm_eps)
+        self.padding_idx = int(padding_idx)
