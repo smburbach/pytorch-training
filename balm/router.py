@@ -218,12 +218,18 @@ class TopKRouter(RouterBase):
             Tensor of shape (batch_size, sequence_length, num_experts) containing
             the router logits.
         """
+        num_routable_experts = self.num_experts - self.num_shared_experts
+
+        # router
         router_probs, router_logits = self._compute_router_probabilities(x)
-        top_k_values, top_k_indices = torch.topk(router_probs, k=self.top_k, dim=-1)
-        expert_mask = F.one_hot(top_k_indices, num_classes=self.num_experts).sum(dim=-2)
-        # expert_values = torch.zeros_like(
-        #     expert_mask, dtype=top_k_values.dtype
-        # ).scatter_(-1, top_k_indices, top_k_values)
+        _, topk_indices = torch.topk(router_probs, k=self.top_k, dim=-1)
+        expert_mask = F.one_hot(topk_indices, num_classes=num_routable_experts).sum(
+            dim=-2
+        )
+
+        # router_probs, router_logits = self._compute_router_probabilities(x)
+        # top_k_values, top_k_indices = torch.topk(router_probs, k=self.top_k, dim=-1)
+        # expert_mask = F.one_hot(top_k_indices, num_classes=self.num_experts).sum(dim=-2)
 
         # mask tokens if their desired experts are above capacity
         token_priority = torch.cumsum(expert_mask, dim=-2)
