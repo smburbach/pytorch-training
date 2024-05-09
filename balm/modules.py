@@ -637,8 +637,16 @@ class SparseMLP(nn.Module):
 
         Returns:
         --------
-        x : torch.Tensor
-            Output tensor of shape (batch_size, sequence_length, embed_dim).
+        output : Tuple[torch.Tensor, Tuple]
+            A tuple containing the following:
+             - x : torch.Tensor
+                Output tensor of shape (batch_size, sequence_length, embed_dim).
+             - router_outputs : Tuple[torch.Tensor, torch.Tensor]
+                A tuple containing the following:
+                 - router_logits : torch.Tensor
+                    Router logits of shape (batch_size, sequence_length, num_experts).
+                 - expert_mask : torch.Tensor
+                    Expert mask of shape (batch_size, sequence_length, num_experts).
         """
         # router
         expert_mask, router_probs, router_logits = self.router(x)
@@ -655,7 +663,9 @@ class SparseMLP(nn.Module):
 
         # combine outputs from the selected tokens for each expert
         x = torch.stack(expert_outputs, dim=-1) * expert_mask.unsqueeze(-2)
-        x = x.sum(dim=-1)
+        # x = x.sum(dim=-1)
+        # multiply by router probs before summing
+        x = torch.sum(x * router_probs.unsqueeze(-2), dim=-1)
 
         return x, (router_logits, expert_mask)
 
@@ -1103,49 +1113,65 @@ class HybridSparseTransformerLayer(nn.Module):
         num_heads: int,
         num_experts: int,
         expert_capacity: int,
+        max_length: int,
         num_shared_experts: int = 0,
         top_k: int = 2,
-        activation: str = "gelu",
-        expert_activation: str = "gelu",
+        activation: str = "swiglu",
+        expert_activation: str = "swiglu",
         dropout: float = 0.1,
         attention_dropout: float = 0.0,
         expert_ffn_dropout: float = 0.0,
+        token_embedding_dropout: float = 0.0,
         layer_norm_eps: float = 1e-5,
         router_dtype: str = "float32",
         router_bias: bool = False,
         router_jitter: float = 0.0,
         router_ignore_padding_tokens: bool = True,
-        router_class: nn.Module = TopKRouter,
-        expert_class: nn.Module = Expert,
-        # config: BalmMoEConfig,
+        expert_choice_router: bool = False,
+        pre_norm: bool = True,
+        positional_embedding_type: str = "rotary",
     ):
         super().__init__()
-        self.dense_transformer = TransformerLayer(
+
+        # dense transformer
+        self.dense_transformer = DenseTransformerLayer(
             embed_dim=embed_dim,
             ffn_dim=ffn_dim,
             num_heads=num_heads,
             dropout=dropout,
             attention_dropout=attention_dropout,
+            token_embedding_dropout=token_embedding_dropout,
             layer_norm_eps=layer_norm_eps,
             activation=activation,
+            positional_embedding_type=positional_embedding_type,
+            pre_norm=pre_norm,
         )
+
+        # sparse residual connection
+        self.residual_norm = nn.LayerNorm(embed_dim, eps=layer_norm_eps)
         self.sparse_residual = SparseMLP(
             embed_dim=embed_dim,
             ffn_dim=residual_ffn_dim,
+            max_length=max_length,
             num_experts=num_experts,
             expert_capacity=expert_capacity,
             num_shared_experts=num_shared_experts,
             top_k=top_k,
-            expert_activation=expert_activation,
+            dropout=dropout,
+            attention_dropout=attention_dropout,
             expert_ffn_dropout=expert_ffn_dropout,
+            token_embedding_dropout=token_embedding_dropout,
+            layer_norm_eps=layer_norm_eps,
+            activation=activation,
+            expert_activation=expert_activation,
+            positional_embedding_type=positional_embedding_type,
+            pre_norm=pre_norm,
             router_dtype=router_dtype,
             router_bias=router_bias,
             router_jitter=router_jitter,
             router_ignore_padding_tokens=router_ignore_padding_tokens,
-            router_class=router_class,
-            expert_class=expert_class,
+            expert_choice_router=expert_choice_router,
         )
-        self.residual_norm = nn.LayerNorm(embed_dim, eps=layer_norm_eps)
 
     def forward(
         self,
@@ -1192,9 +1218,10 @@ class HybridSparseTransformerLayer(nn.Module):
         .. _here:
             https://pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html#torch.nn.MultiheadAttention.forward
         """
-        residual, (router_logits, expert_mask) = self.sparse_residual(
-            self.residual_norm(x)
-        )
+        # residual connection
+        residual, (router_logits, _) = self.sparse_residual(self.residual_norm(x))
+
+        # dense transformer
         x = self.dense_transformer(
             x,
             attention_mask=attention_mask,
@@ -1205,7 +1232,11 @@ class HybridSparseTransformerLayer(nn.Module):
             x, attn = x
         else:
             x = x[0]
+
+        # add residual
         x = x + residual
+
+        # outputs
         if need_weights:
             if output_router_logits:
                 return (x, attn, router_logits)
@@ -1213,6 +1244,144 @@ class HybridSparseTransformerLayer(nn.Module):
         if output_router_logits:
             return (x, router_logits)
         return x
+
+
+# class HybridSparseTransformerLayer(nn.Module):
+#     """
+#     Hybrid sparse transformer layer. Inspired by Snowflake's `Arctic model`_.
+
+#     .. _Arctic model:
+#         https://www.snowflake.com/blog/arctic-open-efficient-foundation-language-models-snowflake/
+#     """
+
+#     def __init__(
+#         self,
+#         embed_dim: int,
+#         ffn_dim: int,
+#         residual_ffn_dim: int,
+#         num_heads: int,
+#         max_length: int,
+#         num_experts: int,
+#         expert_capacity: int,
+#         num_shared_experts: int = 0,
+#         top_k: int = 2,
+#         activation: str = "swiglu",
+#         expert_activation: str = "swiglu",
+#         dropout: float = 0.1,
+#         attention_dropout: float = 0.0,
+#         expert_ffn_dropout: float = 0.0,
+#         token_embedding_dropout: float = 0.0,
+#         layer_norm_eps: float = 1e-5,
+#         positional_embedding_type: str = "rotary",
+#         pre_norm: bool = True,
+#         router_dtype: str = "float32",
+#         router_bias: bool = False,
+#         router_jitter: float = 0.0,
+#         router_ignore_padding_tokens: bool = True,
+#         expert_choice_router: bool = True,
+#         # config: BalmMoEConfig,
+#     ):
+#         super().__init__()
+#         self.dense_transformer = DenseTransformerLayer(
+#             embed_dim,
+#             ffn_dim,
+#             num_heads,
+#             max_length,
+#             dropout=dropout,
+#             attention_dropout=attention_dropout,
+#             token_embedding_dropout=token_embedding_dropout,
+#             layer_norm_eps=layer_norm_eps,
+#             activation=activation,
+#             positional_embedding_type=positional_embedding_type,
+#             pre_norm=pre_norm,
+#         )
+#         self.sparse_residual = SparseMLP(
+#             embed_dim=embed_dim,
+#             ffn_dim=ffn_dim,
+#             num_experts=num_experts,
+#             num_shared_experts=num_shared_experts,
+#             top_k=top_k,
+#             expert_capacity=expert_capacity,
+#             activation=expert_activation,
+#             expert_ffn_dropout=expert_ffn_dropout,
+#             router_dtype=router_dtype,
+#             router_bias=router_bias,
+#             router_jitter=router_jitter,
+#             router_ignore_padding_tokens=router_ignore_padding_tokens,
+#             router_class=ExpertChoiceRouter if expert_choice_router else TopKRouter,
+#             expert_class=Expert,
+#         )
+#         self.residual_norm = nn.LayerNorm(embed_dim, eps=layer_norm_eps)
+
+#     def forward(
+#         self,
+#         x: torch.Tensor,
+#         attention_mask: Optional[torch.Tensor] = None,
+#         key_padding_mask: Optional[torch.Tensor] = None,
+#         need_weights: bool = False,
+#         output_router_logits: bool = True,
+#     ) -> Union[torch.Tensor, Tuple[torch.Tensor, Tuple]]:
+#         """
+#         Process the input hidden states.
+
+#         Parameters:
+#         -----------
+#         x : torch.Tensor
+#             Input tensor of shape (batch_size, sequence_length, embed_dim).
+
+#         attn_mask : torch.Tensor, optional
+#             Attention mask of shape (batch_size * num_heads, sequence_length, sequence_length). The default is None.
+
+#         key_padding_mask : torch.Tensor, optional
+#             Mask of shape (batch_size, sequence_length). The default is None.
+
+#         need_weights : bool, optional
+#             Whether to return attention weights. The default is False.
+
+#             .. note::
+#                 if `need_weights` is ``True``, the output will be a tuple of (x, attn). Also,
+#                 nn.MultiHeadAttention will not be able to use the optimized torch implementation
+#                 of ``scaled_dot_product_attention``. See `here`_ for more details.
+
+#         output_router_logits : bool, optional
+#             Whether to output router logits. The default is True.
+
+#         Returns:
+#         --------
+#         x : torch.Tensor or Tuple
+
+#             Output tensor of shape (batch_size, sequence_length, embed_dim). If `need_weights`, is ``True``,
+#             output is a tuple of (x, attn). If `output_router_logits` is ``True``, the output will be a tuple
+#             of (x, router_logits) or (x, attn, router_logts) depending on the value of `need_weights`.
+
+
+#         .. _here:
+#             https://pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html#torch.nn.MultiheadAttention.forward
+#         """
+#         # sparse residual connection
+#         residual, (router_logits, expert_mask) = self.sparse_residual(
+#             self.residual_norm(x)
+#         )
+
+#         # dense transformer
+#         x = self.dense_transformer(
+#             x,
+#             attention_mask=attention_mask,
+#             key_padding_mask=key_padding_mask,
+#             need_weights=need_weights,
+#         )
+#         if need_weights:
+#             x, attn = x
+#         else:
+#             x = x[0]
+#         x = x + residual
+#         if need_weights:
+#             if output_router_logits:
+#                 return (x, attn, router_logits)
+#             return (x, attn)
+#         if output_router_logits:
+#             return (x, router_logits)
+#         return x
 
 
 class SparseRoformerLayer(nn.Module):
