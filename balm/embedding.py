@@ -27,14 +27,15 @@ from torch import nn
 
 
 class RelativePositionalEmbedding(nn.Module):
-    def __init__(self, d_model, max_len=320):
+    def __init__(self, embed_dim: int, max_length: int):
         super(RelativePositionalEmbedding, self).__init__()
 
         # Compute the positional encodings once in log space.
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len).unsqueeze(1)
+        pe = torch.zeros(max_length, embed_dim)
+        position = torch.arange(0, max_length).unsqueeze(1)
         div_term = torch.exp(
-            torch.arange(0, d_model, 2) * -(torch.log(torch.tensor(10000.0)) / d_model)
+            torch.arange(0, embed_dim, 2)
+            * -(torch.log(torch.tensor(10000.0)) / embed_dim)
         )
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
@@ -46,12 +47,14 @@ class RelativePositionalEmbedding(nn.Module):
         return x
 
 
-class RotaryPositionalEmbeddings(nn.Module):
-    def __init__(self, dim: int, max_len: int):
-        super(RotaryPositionalEmbeddings, self).__init__()
-        self.dim = dim
-        self.max_len = max_len
-        self.inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2).float() / dim))
+class RotaryPositionalEmbedding(nn.Module):
+    def __init__(self, embed_dim: int, max_length: int):
+        super(RotaryPositionalEmbedding, self).__init__()
+        self.embed_dim = embed_dim
+        self.max_length = max_length
+        self.inv_freq = 1.0 / (
+            10000 ** (torch.arange(0, embed_dim, 2).float() / embed_dim)
+        )
 
     def get_positional_embeddings(self, x: torch.Tensor):
         """
@@ -88,8 +91,8 @@ class RotaryPositionalEmbeddings(nn.Module):
 
         """
         pos_emb = self.get_positional_embeddings(x).to(x.device)
-        s, c = pos_emb[:, : self.dim // 2], pos_emb[:, self.dim // 2 :]
-        x1, x2 = x[..., : self.dim // 2], x[..., self.dim // 2 :]
+        s, c = pos_emb[:, : self.embed_dim // 2], pos_emb[:, self.embed_dim // 2 :]
+        x1, x2 = x[..., : self.embed_dim // 2], x[..., self.embed_dim // 2 :]
         x_rot = torch.cat(((x1 * c) + (x2 * s), (-x1 * s) + (x2 * c)), dim=-1)
         return x_rot
 
