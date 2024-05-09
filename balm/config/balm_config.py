@@ -38,11 +38,14 @@ class BalmConfig(BaseConfig):
         dropout: float = 0.1,
         attention_dropout: float = 0.0,
         token_embedding_dropout: float = 0.0,
+        positional_embedding_type: str = "rotary",
+        pre_norm: bool = True,
+        activation: str = "swiglu",
         layer_norm_eps: float = 1e-5,
         padding_idx: int = 0,
     ):
         """
-        Configuration for the Balm model.
+        Configuration for the Balm model. Default parameters are similar to the 8M parameter ESM-2 model.
 
         Parameters
         ----------
@@ -76,6 +79,15 @@ class BalmConfig(BaseConfig):
         token_embedding_dropout : float, default=0.0
             The dropout rate for the token embedding layer.
 
+        positional_embedding_type : str, default="rotary"
+            The type of positional embedding to use. Options are "rotary" or "relative".
+
+        pre_norm : bool, default=True
+            Whether to use pre-norm or post-norm.
+
+        activation : str, default="swiglu"
+            The activation function to use in the feed-forward network. Options are "swiglu", "relu", or "gelu".
+
         layer_norm_eps : float, default=1e-5
             The epsilon value for the layer normalization.
 
@@ -93,5 +105,16 @@ class BalmConfig(BaseConfig):
         self.dropout = dropout
         self.attention_dropout = attention_dropout
         self.token_embedding_dropout = token_embedding_dropout
+        if positional_embedding_type.lower() not in ["rotary", "relative"]:
+            raise ValueError(
+                f"Invalid positional embedding type: {positional_embedding_type}. Options are 'rotary' or 'relative'."
+            )
+        self.positional_embedding_type = positional_embedding_type.lower()
+        if activation.lower() not in ["swiglu", "relu", "gelu"]:
+            raise ValueError(
+                f"Invalid FFN activation: {activation}. Options are 'swiglu', 'relu', or 'gelu'."
+            )
+        self.activation = activation.lower()
+        self.pre_norm = pre_norm
         self.layer_norm_eps = layer_norm_eps
         self.padding_idx = padding_idx
