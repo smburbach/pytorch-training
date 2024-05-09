@@ -91,18 +91,12 @@ class RouterBase(nn.Module):
             Logits tensor of shape (batch_size, sequence_length, num_experts) corresponding
             to raw router logits. This is used for computing router z-loss.
         """
-        # float32 is used to ensure stability. See the discussion of "selective precision" in
-        # https://arxiv.org/abs/2101.03961.
-        # we also store the input dtype so we can cast the output back to the original dtype
+        # float32 is used to ensure stability. See https://arxiv.org/abs/2101.03961.
         self.input_dtype = x.dtype
         x = x.to(self.dtype)
         if self.jitter > 0:
             x *= torch.empty_like(x).uniform_(1.0 - self.jitter, 1.0 + self.jitter)
-
-        # shape: [batch_size, sequence_length, num_experts]
-        logits = self.classifier(x)
-
-        # apply softmax and cast back to the original dtype
+        logits = self.classifier(x)  # (batch, seq_len, num_experts)
         probabilities = F.softmax(logits, dim=dim, dtype=self.dtype).to(
             self.input_dtype
         )
@@ -227,10 +221,6 @@ class TopKRouter(RouterBase):
             dim=-2
         )
 
-        # router_probs, router_logits = self._compute_router_probabilities(x)
-        # top_k_values, top_k_indices = torch.topk(router_probs, k=self.top_k, dim=-1)
-        # expert_mask = F.one_hot(top_k_indices, num_classes=self.num_experts).sum(dim=-2)
-
         # mask tokens if their desired experts are above capacity
         token_priority = torch.cumsum(expert_mask, dim=-2)
         expert_capacity_mask = token_priority <= self.expert_capacity
@@ -354,9 +344,6 @@ class ExpertChoiceRouter(RouterBase):
                 router_probs[..., i], k=self.expert_capacity, dim=1
             )
             expert_mask[:, :, i].scatter_(1, top_k_indices, 1)
-
-        # Ensure that the mask is binary
-        # expert_mask = expert_mask.clamp(max=1)
 
         # Add shared experts processing all tokens
         if self.num_shared_experts > 0:
