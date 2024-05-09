@@ -32,8 +32,8 @@ from ..modules import (
     BalmClassificationHead,
     BalmLMHead,
     ClassifierOutput,
+    DenseTransformerLayer,
     MaskedLMOutput,
-    RoformerLayer,
 )
 from .base import BalmBase
 
@@ -46,7 +46,7 @@ class BalmModel(BalmBase):
         config: BalmConfig,
     ):
         """
-        BALM model, with rotary embeddings, pre-norm, and SwiGLU activations.
+        BALM model
 
         Parameters
         ----------
@@ -55,26 +55,33 @@ class BalmModel(BalmBase):
 
         """
         super().__init__(config)
+        # embedding
         self.embed_tokens = nn.Embedding(
             self.config.vocab_size,
             self.config.embed_dim,
             padding_idx=self.config.padding_idx,
         )
-        self.embedding_dropout = nn.Dropout(self.config.token_embedding_dropout)
+
+        # layers
         self.layers = nn.ModuleList(
             [
-                RoformerLayer(
+                DenseTransformerLayer(
                     self.config.embed_dim,
                     self.config.ffn_dim,
                     self.config.num_heads,
                     self.config.max_length,
                     dropout=self.config.dropout,
                     attention_dropout=self.config.attention_dropout,
+                    token_embedding_dropout=self.config.token_embedding_dropout,
                     layer_norm_eps=self.config.layer_norm_eps,
+                    activation=self.config.activation,
+                    positional_embedding_type=self.config.positional_embedding_type,
+                    pre_norm=self.config.pre_norm,
                 )
                 for _ in range(self.config.num_layers)
             ]
         )
+
         self.final_layer_norm = nn.LayerNorm(
             self.config.embed_dim, eps=self.config.layer_norm_eps
         )
@@ -98,11 +105,8 @@ class BalmModel(BalmBase):
             The output tensor. The shape is (batch_size, sequence_length, embed_dim).
         """
         x = self.embed_tokens(x)
-        x = self.embedding_dropout(x)
         for layer in self.layers:
             x = layer(
-                x,
-                x,
                 x,
                 attention_mask=attention_mask,
                 key_padding_mask=key_padding_mask,
@@ -110,7 +114,8 @@ class BalmModel(BalmBase):
             )
             if need_weights:
                 x, attn = x
-        x = self.final_layer_norm(x)
+        if self.config.pre_norm:
+            x = self.final_layer_norm(x)
         if need_weights:
             return x, attn
         return x
@@ -157,9 +162,19 @@ class BalmForMaskedLM(BalmBase):
 
         Returns
         -------
-        torch.Tensor
-            The output tensor. The shape is (batch_size, seq_len, vocab_size).
+        output (tuple or dict):
+            If `return_dict` is ``True``, the output is a ``dict`` of outputs:
+                - last_hidden_state (torch.FloatTensor): last hidden state
+                - attentions (torch.FloatTensor): attention weights
+                - hidden_states (torch.FloatTensor): hidden states
+                - router_logits (torch.FloatTensor): router logits
+            If `return_dict` is ``False``, the output is a ``tuple`` with the f0llowing elements:
+                - last_hidden_state (torch.FloatTensor): last hidden state
+                - attentions (torch.FloatTensor): attention weights
+                - hidden_states (torch.FloatTensor): hidden states
+                - router_logits (torch.FloatTensor): router logits
         """
+        # encoder
         x = self.balm(
             input_ids,
             attention_mask=attention_mask,
@@ -170,6 +185,7 @@ class BalmForMaskedLM(BalmBase):
             x, attn = x
         logits = self.lm_head(x)
 
+        # LM head
         masked_lm_loss = None
         if labels is not None:
             masked_lm_loss = self.criterion(
@@ -177,6 +193,7 @@ class BalmForMaskedLM(BalmBase):
                 labels.view(-1),
             )
 
+        # outputs
         output = MaskedLMOutput(
             logits=logits,
             loss=masked_lm_loss,
@@ -228,8 +245,6 @@ class BalmForSequenceClassification(BalmBase):
             dropout=classifier_dropout,
             activation=classifier_activation,
         )
-
-        # loss
         self.criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
     def forward(
