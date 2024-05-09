@@ -40,7 +40,9 @@ class BalmMoEConfig(BaseConfig):
         expert_capacity: Optional[int] = None,
         expert_capacity_multiplier: float = 1.5,
         num_shared_experts: int = 0,
-        expert_activation: str = "gelu",
+        activation: str = "swiglu",
+        positional_embedding_type: str = "rotary",
+        pre_norm: bool = True,
         router_z_loss_coef: float = 0.001,
         router_aux_loss_coef: float = 0.001,
         alternate_sparsity: bool = False,
@@ -49,6 +51,7 @@ class BalmMoEConfig(BaseConfig):
         router_jitter: float = 0.0,
         router_dtype: str = "float32",
         router_ignore_padding_tokens: bool = True,
+        expert_choice_router: bool = False,
         dropout: float = 0.1,
         attention_dropout: float = 0.0,
         expert_ffn_dropout: float = 0.0,
@@ -57,7 +60,7 @@ class BalmMoEConfig(BaseConfig):
         padding_idx: int = 0,
     ):
         """
-        Configuration for the BalmMoE model.
+        Configuration for the BalmMoE model. Default parameters are similar to the 8M parameter ESM-2 model.
 
         Parameters
         ----------
@@ -91,7 +94,7 @@ class BalmMoEConfig(BaseConfig):
         num_shared_experts : int, default=0
             The number of shared experts in the transformer.
 
-        expert_activation : str, default="gelu"
+        activation : str, default="gelu"
             The activation function to use for the experts. Options are "relu" and "gelu".
 
         router_z_loss_coef : float, default=0.001
@@ -124,7 +127,7 @@ class BalmMoEConfig(BaseConfig):
         attention_dropout : float, default=0.0
             The dropout to use for the attention.
 
-        expert_ffn_dropout : float, default=0.0
+        ffn_dropout : float, default=0.0
             The dropout to use for the experts.
 
         token_embedding_dropout : float, default=0.0
@@ -151,7 +154,17 @@ class BalmMoEConfig(BaseConfig):
         )
         self.expert_capacity_multiplier = expert_capacity_multiplier
         self.num_shared_experts = num_shared_experts
-        self.expert_activation = expert_activation
+        if positional_embedding_type.lower() not in ["rotary", "relative"]:
+            raise ValueError(
+                f"Invalid positional embedding type: {positional_embedding_type}. Options are 'rotary' or 'relative'."
+            )
+        self.positional_embedding_type = positional_embedding_type.lower()
+        if activation.lower() not in ["swiglu", "relu", "gelu"]:
+            raise ValueError(
+                f"Invalid FFN activation: {activation}. Options are 'swiglu', 'relu', or 'gelu'."
+            )
+        self.activation = activation.lower()
+        self.pre_norm = pre_norm
         self.router_z_loss_coef = router_z_loss_coef
         self.router_aux_loss_coef = router_aux_loss_coef
         self.alternate_sparsity = alternate_sparsity
@@ -160,6 +173,7 @@ class BalmMoEConfig(BaseConfig):
         self.router_jitter = router_jitter
         self.router_dtype = router_dtype
         self.router_ignore_padding_tokens = router_ignore_padding_tokens
+        self.expert_choice_router = expert_choice_router
         self.dropout = dropout
         self.attention_dropout = attention_dropout
         self.expert_ffn_dropout = expert_ffn_dropout
