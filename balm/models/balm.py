@@ -39,21 +39,21 @@ from .base import BalmBase
 
 
 class BalmModel(BalmBase):
-    config_cls = BalmConfig
+    """
+    Baseline Antibody Language Model (BALM)
+
+    Parameters
+        ----------
+        config : BalmConfig
+            The configuration object defining model architecture and hyperparameters.
+    """
+
+    config_class = BalmConfig
 
     def __init__(
         self,
         config: BalmConfig,
     ):
-        """
-        BALM model
-
-        Parameters
-        ----------
-        config : BalmConfig
-            The configuration object defining model architecture and hyperparameters.
-
-        """
         super().__init__(config)
         # embedding
         self.embed_tokens = nn.Embedding(
@@ -101,8 +101,9 @@ class BalmModel(BalmBase):
 
         Returns
         -------
-        torch.Tensor
+        Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]
             The output tensor. The shape is (batch_size, sequence_length, embed_dim).
+            If `need_weights` is ``True``, the output is a tuple of the output tensor and the attention weights.
         """
         x = self.embed_tokens(x)
         for layer in self.layers:
@@ -122,22 +123,22 @@ class BalmModel(BalmBase):
 
 
 class BalmForMaskedLM(BalmBase):
-    config_cls = BalmConfig
+    """
+    BALM model for masked language modeling. Uses the base BALM model with rotary
+    embeddings, pre-norm, and SwiGLU activations, and adds a language modeling head.
+
+    Parameters
+    ----------
+    config : BalmConfig
+        The configuration object defining model architecture and hyperparameters.
+    """
+
+    config_class = BalmConfig
 
     def __init__(
         self,
         config: BalmConfig,
     ):
-        """
-        BALM model for masked language modeling. Uses the base BALM model with rotary
-        embeddings, pre-norm, and SwiGLU activations, and adds a language modeling head.
-
-        Parameters
-        ----------
-        config : BalmConfig
-            The configuration object defining model architecture and hyperparameters.
-
-        """
         super().__init__(config)
         self.balm = BalmModel(config=self.config)
         self.lm_head = BalmLMHead(self.config.embed_dim, self.config.vocab_size)
@@ -208,22 +209,22 @@ class BalmForMaskedLM(BalmBase):
 
 
 class BalmForSequenceClassification(BalmBase):
-    config_cls = BalmConfig
+    """
+    BALM model for sequence classification. Uses the dense BALM transformer model and adds
+    a sequence-level classification head.
+
+    Parameters
+    ----------
+    config : BalmConfig
+        The configuration object defining model architecture and hyperparameters.
+    """
+
+    config_class = BalmConfig
 
     def __init__(
         self,
         config: BalmConfig,
     ):
-        """
-        BALM model for sequence classification. Uses the dense BALM transformer model and adds
-        a sequence-level classification head.
-
-        Parameters
-        ----------
-        config : BalmConfig
-            The configuration object defining model architecture and hyperparameters.
-
-        """
         super().__init__(config)
         # model
         self.balm = BalmModel(config=self.config)

@@ -49,7 +49,7 @@ class BalmMoEModel(BalmBase):
         Configuration for the model.
     """
 
-    config_cls = BalmMoEConfig
+    config_class = BalmMoEConfig
 
     def __init__(
         self,
@@ -191,6 +191,7 @@ class BalmMoEModel(BalmBase):
                 - attentions (torch.FloatTensor): attention weights
                 - hidden_states (torch.FloatTensor): hidden states
                 - router_logits (torch.FloatTensor): router logits
+
         """
         # init
         attn_weights = []
@@ -272,9 +273,14 @@ class BalmMoEModel(BalmBase):
 class BalmMoEForMaskedLM(BalmBase):
     """
     BALM Mixture of Experts model for Masked Language Modeling.
+
+    Parameters
+    ----------
+    config: BalmMoEConfig
+        Configuration for the model.
     """
 
-    config_cls = BalmMoEConfig
+    config_class = BalmMoEConfig
 
     def __init__(
         self,
@@ -382,22 +388,22 @@ class BalmMoEForMaskedLM(BalmBase):
 
 
 class BalmMoEForSequenceClassification(BalmBase):
-    config_cls = BalmMoEConfig
+    """
+    BALM model for sequence classification. Uses the dense BALM transformer model and adds
+    a sequence-level classification head.
+
+    Parameters
+    ----------
+    config : BalmConfig
+        The configuration object defining model architecture and hyperparameters.
+    """
+
+    config_class = BalmMoEConfig
 
     def __init__(
         self,
         config: BalmMoEConfig,
     ):
-        """
-        BALM model for sequence classification. Uses the dense BALM transformer model and adds
-        a sequence-level classification head.
-
-        Parameters
-        ----------
-        config : BalmConfig
-            The configuration object defining model architecture and hyperparameters.
-
-        """
         super().__init__(config)
         # model
         self.balm = BalmMoEModel(config=self.config)
