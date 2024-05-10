@@ -27,6 +27,23 @@ from torch import nn
 
 
 class RelativePositionalEmbedding(nn.Module):
+    """
+    Relative positional embeddings, as initially described in the
+    `Relative Position Embeddings for Transformers`_ paper.
+
+    Parameters
+    ----------
+    embed_dim: int
+        The embedding dimension.
+
+    max_length: int
+        The maximum length of the input tensor.
+
+    .. _Relative Position Embeddings for Transformers:
+        https://arxiv.org/abs/1803.02155
+
+    """
+
     def __init__(self, embed_dim: int, max_length: int):
         super(RelativePositionalEmbedding, self).__init__()
 
@@ -42,12 +59,41 @@ class RelativePositionalEmbedding(nn.Module):
         pe = pe.unsqueeze(0)
         self.register_buffer("pe", pe)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply relative positional embeddings to the input tensor.
+
+        Parameters
+        ----------
+        x: torch.Tensor
+            The input tensor. Expected shape is (batch_size, seq_len, dim).
+
+        Returns
+        -------
+        torch.Tensor
+            The input tensor with relative positional embeddings applied. The shape is (batch_size, seq_len, dim).
+        """
         x = x + self.pe[:, : x.size(1)]
         return x
 
 
 class RotaryPositionalEmbedding(nn.Module):
+    """
+    Rotary positional embeddings, as initially described in the
+    `RoFormer: Enhanced Transformer with Rotary Position Embeddings`_ paper.
+
+    Parameters
+    ----------
+    embed_dim: int
+        The embedding dimension.
+
+    max_length: int
+        The maximum length of the input tensor.
+
+    .. _RoFormer: Enhanced Transformer with Rotary Position Embeddings:
+        https://arxiv.org/abs/2104.09864
+    """
+
     def __init__(self, embed_dim: int, max_length: int):
         super(RotaryPositionalEmbedding, self).__init__()
         self.embed_dim = embed_dim
@@ -96,5 +142,18 @@ class RotaryPositionalEmbedding(nn.Module):
         x_rot = torch.cat(((x1 * c) + (x2 * s), (-x1 * s) + (x2 * c)), dim=-1)
         return x_rot
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply rotary positional embeddings to the input tensor.
+
+        Parameters
+        ----------
+        x: torch.Tensor
+            The input tensor. Expected shape is (batch_size, seq_len, dim).
+
+        Returns
+        -------
+        torch.Tensor
+            The input tensor with rotary positional embeddings applied. The shape is (batch_size, seq_len, dim).
+        """
         return self.apply_rotary_embeddings(x)
