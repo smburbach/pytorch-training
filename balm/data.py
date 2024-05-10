@@ -158,6 +158,24 @@ class DataCollator:
         examples: List[Union[List[int], Any, Dict[str, Any]]],
         mask_probs: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """
+        Collate a batch of examples.
+
+        Parameters
+        ----------
+        examples : List[Union[List[int], Any, Dict[str, Any]]]
+            The batch of examples to collate.
+
+        mask_probs : Optional[str]
+            The name of a key in the examples dictionary that contains the masking probabilities
+            for MLM training. If not specified, examples will be uniformly masked at ``self.mlm_probability``.
+
+        Returns
+        -------
+        Dict[str, Any]
+            The collated batch.
+
+        """
         # convert to tensors if necessary
         if isinstance(examples, dict):
             batch = examples
@@ -171,6 +189,8 @@ class DataCollator:
 
         # MLM masking
         if self.mlm:
+            # TODO: implement mask_probs
+            # not sure how they'll be formatted -- as a stacked tensor, a list of tensors, or a list of CIGAR-like strings
             batch["input_ids"], batch["labels"] = self.mask_tokens(batch["input_ids"])
         else:
             labels = batch["input_ids"].clone()
@@ -185,7 +205,10 @@ class DataCollator:
         return batch
 
     def mask_tokens(
-        self, inputs: torch.Tensor, special_tokens_mask: Optional[Any] = None
+        self,
+        inputs: torch.Tensor,
+        mask_probs: Optional[str] = None,
+        special_tokens_mask: Optional[Any] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         labels = inputs.clone()
         # We sample a few tokens in each sequence for MLM training (with probability `self.mlm_probability`)
