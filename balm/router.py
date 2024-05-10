@@ -226,15 +226,18 @@ class TopKRouter(RouterBase):
         expert_capacity_mask = token_priority <= self.expert_capacity
         expert_mask = expert_mask * expert_capacity_mask
 
-        # get the probabilities of the top-choice experts for each token
-        # router_probs = expert_values * expert_mask
-
-        # Add shared experts processing all tokens
+        # shared experts
         if self.num_shared_experts > 0:
+            # include shared experts in the expert mask (first N experts are shared experts)
             shared_expert_mask = torch.ones_like(
                 router_probs[..., : self.num_shared_experts]
             )
             expert_mask = torch.cat((shared_expert_mask, expert_mask), dim=-1)
+            # add shared experts to router probs
+            shared_expert_probs = torch.ones_like(
+                router_probs[..., : self.num_shared_experts]
+            )
+            router_probs = torch.cat((shared_expert_probs, router_probs), dim=-1)
 
         return expert_mask, router_probs, router_logits
 
@@ -345,11 +348,17 @@ class ExpertChoiceRouter(RouterBase):
             )
             expert_mask[:, :, i].scatter_(1, top_k_indices, 1)
 
-        # Add shared experts processing all tokens
+        # shared experts
         if self.num_shared_experts > 0:
+            # include shared experts in the expert mask (first N experts are shared experts)
             shared_expert_mask = torch.ones_like(
                 router_probs[..., : self.num_shared_experts]
             )
             expert_mask = torch.cat((shared_expert_mask, expert_mask), dim=-1)
+            # add shared experts to router probs
+            shared_expert_probs = torch.ones_like(
+                router_probs[..., : self.num_shared_experts]
+            )
+            router_probs = torch.cat((shared_expert_probs, router_probs), dim=-1)
 
         return expert_mask, router_probs, router_logits
