@@ -22,6 +22,7 @@
 #
 
 import json
+import os
 from typing import Optional
 
 
@@ -43,6 +44,17 @@ class BaseConfig:
         else:
             return json_string
 
+    def save_pretrained(self, save_directory: str):
+        """
+        Save the config to a JSON file.
+
+        Parameters
+        ----------
+        save_directory : str
+            The directory to save the config to.
+        """
+        self.to_json(os.path.join(save_directory, "config.json"))
+
     @classmethod
     def from_json(cls, json_path: str):
         with open(json_path, "r") as f:
@@ -52,3 +64,15 @@ class BaseConfig:
     @classmethod
     def from_dict(cls, config: dict):
         return cls(**config)
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_path: str):
+        """
+        Load the config from a pretrained model.
+
+        Parameters
+        ----------
+        pretrained_model_path : str
+            The path to the pretrained model.
+        """
+        return cls.from_json(os.path.join(pretrained_model_path, "config.json"))
