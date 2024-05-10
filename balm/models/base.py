@@ -110,23 +110,8 @@ class BalmBase(nn.Module):
         """
         # config
         if config is None:
-            config_path = os.path.join(model_path, "config.json")
-            if not os.path.exists(config_path):
-                raise FileNotFoundError(
-                    f"Configuration file not found in the model directory: {model_path}"
-                )
-            config = cls.config_cls.from_json(config_path)
-        elif isinstance(config, str):
-            config_path = os.path.join(model_path, "config.json")
-            if not os.path.exists(config_path):
-                raise FileNotFoundError(f"Configuration file not found: {config_path}")
-            config = cls.config_cls.from_json(config_path)
-        elif isinstance(config, BaseConfig):
-            pass
-        elif isinstance(config, dict):
-            config = cls.config_cls.from_dict(config)
-        else:
-            raise ValueError(f"Invalid configuration type: {type(config)}")
+            config = os.path.join(model_path, "config.json")
+        config = cls.config_class.from_pretrained(config)
 
         # model
         model_path = os.path.join(model_path, "model.pt")
