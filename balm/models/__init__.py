@@ -1,4 +1,4 @@
-from .balm import BalmForMaskedLM, BalmModel
+from .balm import BalmForMaskedLM, BalmForSequenceClassification, BalmModel
 from .balm_expert_choice_moe import (
     BalmExpertChoiceMoEForMaskedLM,
     BalmExpertChoiceMoEModel,
