@@ -215,8 +215,8 @@ class BalmForSequenceClassification(BalmBase):
         config: BalmConfig,
     ):
         """
-        BALM model for masked language modeling. Uses the base BALM model with rotary
-        embeddings, pre-norm, and SwiGLU activations, and adds a language modeling head.
+        BALM model for sequence classification. Uses the dense BALM transformer model and adds
+        a sequence-level classification head.
 
         Parameters
         ----------
@@ -239,6 +239,8 @@ class BalmForSequenceClassification(BalmBase):
             if self.config.classifier_activation is not None
             else "tanh"
         )
+        # classifier_dropout = self.config.dropout
+        # classifier_activation = "tanh"
         self.classifier = BalmClassificationHead(
             embed_dim=self.config.embed_dim,
             num_labels=self.config.num_labels,
