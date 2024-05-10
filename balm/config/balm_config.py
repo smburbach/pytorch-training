@@ -22,7 +22,7 @@
 #
 
 
-from .base_config import BaseConfig
+from .base import BaseConfig
 
 
 class BalmConfig(BaseConfig):
