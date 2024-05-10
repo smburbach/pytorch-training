@@ -43,6 +43,10 @@ class BalmConfig(BaseConfig):
         activation: str = "swiglu",
         layer_norm_eps: float = 1e-5,
         padding_idx: int = 0,
+        # classification head
+        num_labels: int = 2,
+        classifier_dropout: float = 0.0,
+        classifier_activation: str = "tanh",
     ):
         """
         Configuration for the Balm model. Default parameters are similar to the 8M parameter ESM-2 model.
@@ -93,6 +97,16 @@ class BalmConfig(BaseConfig):
 
         padding_idx : int, default=0
             The index of the padding token.
+
+        num_labels : int, default=2
+            The number of labels for the sequence classification head. Only used for BalmForSequenceClassification models.
+
+        classifier_dropout : float, default=0.0
+            The dropout rate for the sequence classification head. Only used for BalmForSequenceClassification models.
+
+        classifier_activation : str, default="tanh"
+            The activation function to use in the sequence classification head. Only used for BalmForSequenceClassification models.
+            Options are "tanh", "relu", or "gelu".
         """
         super().__init__()
         self.embed_dim = int(embed_dim)
@@ -118,3 +132,12 @@ class BalmConfig(BaseConfig):
         self.pre_norm = bool(pre_norm)
         self.layer_norm_eps = float(layer_norm_eps)
         self.padding_idx = int(padding_idx)
+
+        # classification head
+        self.num_labels = int(num_labels)
+        self.classifier_dropout = float(classifier_dropout)
+        if classifier_activation.lower() not in ["tanh", "relu", "gelu"]:
+            raise ValueError(
+                f"Invalid classification head activation: {classifier_activation}. Options are 'tanh', 'relu', or 'gelu'."
+            )
+        self.classifier_activation = classifier_activation.lower()
