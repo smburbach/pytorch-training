@@ -453,9 +453,10 @@ class Trainer:
             Directory to save the model.
         """
         os.makedirs(save_directory, exist_ok=True)
-        torch.save(self.model.state_dict(), os.path.join(save_directory, "model.pt"))
-        if self.model_config is not None:
-            self.model_config.to_json(os.path.join(save_directory, "config.json"))
+        self.model.save_pretrained(save_directory)
+        # torch.save(self.model.state_dict(), os.path.join(save_directory, "model.pt"))
+        # if self.model_config is not None:
+        #     self.model_config.to_json(os.path.join(save_directory, "config.json"))
         if self.optimizer is not None:
             torch.save(
                 self.optimizer.state_dict(),
