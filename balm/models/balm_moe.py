@@ -53,6 +53,8 @@ class BalmMoEModel(BalmBase):
         Configuration for the model.
     """
 
+    config_cls = BalmMoEConfig
+
     def __init__(
         self,
         config: BalmMoEConfig,
@@ -275,6 +277,8 @@ class BalmMoEForMaskedLM(BalmBase):
     """
     BALM Mixture of Experts model for Masked Language Modeling.
     """
+
+    config_cls = BalmMoEConfig
 
     def __init__(
         self,
