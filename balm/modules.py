@@ -663,9 +663,9 @@ class SparseMLP(nn.Module):
 
         # combine outputs from the selected tokens for each expert
         x = torch.stack(expert_outputs, dim=-1) * expert_mask.unsqueeze(-2)
-        # x = x.sum(dim=-1)
         # multiply by router probs before summing
         x = torch.sum(x * router_probs.unsqueeze(-2), dim=-1)
+        # x = x.sum(dim=-1)
 
         return x, (router_logits, expert_mask)
 
