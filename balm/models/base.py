@@ -127,9 +127,7 @@ class BalmBase(nn.Module):
         state_dict_to_load = torch.load(model_path)
         if all(k.startswith("module.") for k in state_dict_to_load.keys()):
             # model wasn't unwrapped properly before saving
-            state_dict_to_load = {
-                k.lstrip("module."): v for k, v in state_dict_to_load.items()
-            }
+            state_dict_to_load = {k[6:]: v for k, v in state_dict_to_load.items()}
         extra_keys = model.load_state_dict(state_dict_to_load, strict=False)
 
         # check to see whether there are any extra (unexpected or missing) keys
