@@ -320,7 +320,7 @@ class Trainer:
                     checkpoint_path = os.path.join(self.checkpoint_dir, checkpoint_name)
                     os.makedirs(checkpoint_path, exist_ok=True)
                     model_to_save = self.unwrap_model(self.model)
-                    model_to_save.save_model(checkpoint_path)
+                    model_to_save.save_pretrained(checkpoint_path)
 
                 # done!
                 if completed_steps >= self.num_train_steps:
@@ -328,7 +328,7 @@ class Trainer:
                     save_path = os.path.join(self.output_dir, "model")
                     os.makedirs(save_path, exist_ok=True)
                     model_to_save = self.unwrap_model(self.model)
-                    model_to_save.save_model(save_path)
+                    model_to_save.save_pretrained(save_path)
                     print("\nTraining complete")
                     break
         pbar.close()
