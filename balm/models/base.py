@@ -25,7 +25,7 @@
 import json
 import os
 import re
-from typing import Dict, Optional, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -43,7 +43,7 @@ class BalmBase(nn.Module):
         self.config = config
 
     @property
-    def num_parameters(self):
+    def num_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     def save_pretrained(self, save_directory: str, max_shard_size: str = "10GB"):
@@ -170,7 +170,7 @@ class BalmBase(nn.Module):
         state_dict: Dict[str, torch.Tensor],
         max_shard_size: Union[int, str] = "10GB",
         weights_name: str = "model.pt",
-    ):
+    ) -> Tuple[Dict[str, torch.Tensor], Optional[Dict[str, Any]]]:
         """
         Splits a model state dictionary in sub-checkpoints so that the final size of each sub-checkpoint does not exceed a
         given size.
@@ -249,7 +249,7 @@ class BalmBase(nn.Module):
         return shards, index
 
     @staticmethod
-    def dtype_byte_size(dtype):
+    def dtype_byte_size(dtype) -> int:
         """
         Returns the size (in bytes) occupied by one parameter of type `dtype`.
 
@@ -281,7 +281,7 @@ class BalmBase(nn.Module):
         return bit_size // 8
 
     @staticmethod
-    def convert_file_size_to_int(size: Union[int, str]):
+    def convert_file_size_to_int(size: Union[int, str]) -> int:
         """
         Converts a size expressed as a string with digits an unit (like `"5MB"`) to an integer (in bytes).
 
@@ -327,7 +327,20 @@ class BalmBase(nn.Module):
 
 def unwrap_model(model: nn.Module) -> nn.Module:
     """
-    Unwrap a model from a wrapper.
+    Unwrap a model.
+
+    Useful when saving models that have been wrapped,
+    e.g. using `nn.DataParallel` or `nn.DistributedDataParallel`.
+
+    Parameters
+    ----------
+    model : nn.Module
+        The model to unwrap.
+
+    Returns
+    -------
+    nn.Module
+        The unwrapped model.
     """
     if hasattr(model, "module"):
         return unwrap_model(model.module)
