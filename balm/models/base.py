@@ -65,9 +65,13 @@ class BalmBase(nn.Module):
         # save the model config
         self.config.save_pretrained(save_directory)
 
+        # unwrap the model
+        model_to_save = unwrap_model(self)
+        state_dict = model_to_save.state_dict()
+
         # shard and save the model
         shards, index = self._shard_checkpoint(
-            self.state_dict(), max_shard_size=max_shard_size
+            state_dict, max_shard_size=max_shard_size
         )
         for shard_file, shard in shards.items():
             torch.save(shard, os.path.join(save_directory, shard_file))
@@ -120,7 +124,13 @@ class BalmBase(nn.Module):
                 f"Model file (model.pt) not found in the supplied model directory: {model_path}"
             )
         model = cls(config=config, *model_args)
-        extra_keys = model.load_state_dict(torch.load(model_path), strict=False)
+        state_dict_to_load = torch.load(model_path)
+        if all(k.startswith("module.") for k in state_dict_to_load.keys()):
+            # model wasn't unwrapped properly before saving
+            state_dict_to_load = {
+                k.lstrip("module."): v for k, v in state_dict_to_load.items()
+            }
+        extra_keys = model.load_state_dict(state_dict_to_load, strict=False)
 
         # check to see whether there are any extra (unexpected or missing) keys
         # unexpected keys are keys in the saved state dict that are not in the model
@@ -314,3 +324,12 @@ class BalmBase(nn.Module):
         raise ValueError(
             "`size` is not in a valid format. Use an integer followed by the unit, e.g., '5GB'."
         )
+
+
+def unwrap_model(model: nn.Module) -> nn.Module:
+    """
+    Unwrap a model from a wrapper.
+    """
+    if hasattr(model, "module"):
+        return unwrap_model(model.module)
+    return model
