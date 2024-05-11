@@ -38,6 +38,11 @@ from ..modules import (
 )
 from ..router import TopKRouter
 
+__all__ = [
+    "BalmHybridMoEModel",
+    "BalmHybridMoEForMaskedLM",
+]
+
 
 class BalmHybridMoEModel(nn.Module):
     """

@@ -1,4 +1,4 @@
-from .balm import BalmForMaskedLM, BalmForSequenceClassification, BalmModel
-from .balm_hybrid_moe import BalmHybridMoEForMaskedLM, BalmHybridMoEModel
-from .balm_moe import BalmMoEForMaskedLM, BalmMoEForSequenceClassification, BalmMoEModel
+from .balm import *
+from .balm_hybrid_moe import *
+from .balm_moe import *
 from .base import BalmBase

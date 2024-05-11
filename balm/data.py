@@ -31,6 +31,13 @@ import torch
 
 from .tokenizer import BatchEncoding, TokenizerBase
 
+__all__ = [
+    "Dataset",
+    "DatasetDict",
+    "DataCollator",
+    "load_dataset",
+]
+
 
 class Dataset:
     def __init__(self, data: Dict[str, Iterable[str]]):

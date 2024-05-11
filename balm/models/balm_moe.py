@@ -38,6 +38,12 @@ from ..modules import (
 )
 from .base import BalmBase
 
+__all__ = [
+    "BalmMoEModel",
+    "BalmMoEForMaskedLM",
+    "BalmMoEForSequenceClassification",
+]
+
 
 class BalmMoEModel(BalmBase):
     """

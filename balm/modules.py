@@ -31,6 +31,21 @@ from .activation import SwiGLU
 from .embedding import RelativePositionalEmbedding, RotaryPositionalEmbedding
 from .router import ExpertChoiceRouter, TopKRouter
 
+__all__ = [
+    # layers
+    "DenseTransformerLayer",
+    "SparseTransformerLayer",
+    "HybridSparseTransformerLayer",
+    "SparseMLP",
+    "Expert",
+    # heads
+    "BalmLMHead",
+    "BalmClassificationHead",
+    # outputs
+    "MaskedLMOutput",
+    "ClassifierOutput",
+]
+
 
 class OutputBase:
     def __getitem__(self, idx):

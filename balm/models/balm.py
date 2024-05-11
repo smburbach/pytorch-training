@@ -37,6 +37,12 @@ from ..modules import (
 )
 from .base import BalmBase
 
+__all__ = [
+    "BalmModel",
+    "BalmForMaskedLM",
+    "BalmForSequenceClassification",
+]
+
 
 class BalmModel(BalmBase):
     """

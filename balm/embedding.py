@@ -25,6 +25,11 @@
 import torch
 from torch import nn
 
+__all__ = [
+    "RelativePositionalEmbedding",
+    "RotaryPositionalEmbedding",
+]
+
 
 class RelativePositionalEmbedding(nn.Module):
     """
