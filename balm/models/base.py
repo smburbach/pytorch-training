@@ -125,8 +125,9 @@ class BalmBase(nn.Module):
             )
         model = cls(config=config, *model_args)
         state_dict_to_load = torch.load(model_path)
+        # if state_dict keys start with "module.", the model wasn't unwrapped before saving
+        # and the keys won't match the madel we're trying to load into
         while all(k.startswith("module.") for k in state_dict_to_load.keys()):
-            # model wasn't unwrapped before saving
             state_dict_to_load = {k[7:]: v for k, v in state_dict_to_load.items()}
         extra_keys = model.load_state_dict(state_dict_to_load, strict=False)
 
