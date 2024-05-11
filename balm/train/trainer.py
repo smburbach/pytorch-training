@@ -319,14 +319,16 @@ class Trainer:
                     checkpoint_name = f"{self.run_name}_steps={completed_steps}"
                     checkpoint_path = os.path.join(self.checkpoint_dir, checkpoint_name)
                     os.makedirs(checkpoint_path, exist_ok=True)
-                    self.save_model(checkpoint_path)
+                    model_to_save = self.unwrap_model(self.model)
+                    model_to_save.save_model(checkpoint_path)
 
                 # done!
                 if completed_steps >= self.num_train_steps:
                     print("<< SAVING FINAL MODEL >>")
                     save_path = os.path.join(self.output_dir, "model")
                     os.makedirs(save_path, exist_ok=True)
-                    self.save_model(save_path)
+                    model_to_save = self.unwrap_model(self.model)
+                    model_to_save.save_model(save_path)
                     print("\nTraining complete")
                     break
         pbar.close()
@@ -494,6 +496,27 @@ class Trainer:
                 eps=self.adam_epsilon,
             )
         return model, optimizer
+
+    def unwrap_model(self, model: nn.Module) -> nn.Module:
+        """
+        Unwrap a model.
+
+        Useful when saving models that have been wrapped,
+        e.g. using `nn.DataParallel` or `nn.DistributedDataParallel`.
+
+        Parameters
+        ----------
+        model : nn.Module
+            The model to unwrap.
+
+        Returns
+        -------
+        nn.Module
+            The unwrapped model.
+        """
+        if hasattr(model, "module"):
+            return self.unwrap_model(model.module)
+        return model
 
     def place_inputs(self, collated: Dict):
         placed = {}
