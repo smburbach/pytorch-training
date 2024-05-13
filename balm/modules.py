@@ -1176,6 +1176,7 @@ class HybridSparseTransformerLayer(nn.Module):
             embed_dim=embed_dim,
             ffn_dim=ffn_dim,
             num_heads=num_heads,
+            max_length=max_length,
             dropout=dropout,
             attention_dropout=attention_dropout,
             token_embedding_dropout=token_embedding_dropout,
@@ -1253,7 +1254,7 @@ class HybridSparseTransformerLayer(nn.Module):
         x = self.embedding_dropout(self.positional_embeddings(x))
 
         # residual connection
-        residual, (router_logits, _) = self.sparse_residual(self.residual_norm(x))
+        residual, router_tuple = self.sparse_residual(self.residual_norm(x))
 
         # dense transformer
         x = self.dense_transformer(
@@ -1271,10 +1272,10 @@ class HybridSparseTransformerLayer(nn.Module):
         # outputs
         if need_weights:
             if output_router_logits:
-                return (x, attn, router_logits)
+                return (x, attn, router_tuple)
             return (x, attn)
         if output_router_logits:
-            return (x, router_logits)
+            return (x, router_tuple)
         return x
 
 

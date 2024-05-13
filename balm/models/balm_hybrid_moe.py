@@ -28,12 +28,12 @@ import torch.nn as nn
 
 from ..config import BalmHybridMoEConfig
 from ..loss import router_load_balancing_loss, router_z_loss
-from ..models import BalmBase
 from ..modules import (
     BalmLMHead,
     HybridSparseTransformerLayer,
     MaskedLMOutput,
 )
+from .base import BalmBase
 
 __all__ = [
     "BalmHybridMoEModel",
@@ -283,10 +283,13 @@ class BalmHybridMoEForMaskedLM(BalmBase):
 
             if output_router_logits:
                 z_loss = self.router_z_loss_coef * (router_z_loss)
-                aux_loss = self.router_aux_loss_coef * (router_aux_loss)
                 outputs["router_z_loss"] = z_loss
-                outputs["router_aux_loss"] = aux_loss
-                loss = loss + z_loss + aux_loss
+                if self.config.expert_choice_router:
+                    loss = loss + z_loss
+                else:
+                    aux_loss = self.router_aux_loss_coef * (router_aux_loss)
+                    outputs["router_aux_loss"] = aux_loss
+                    loss = loss + z_loss + aux_loss
             outputs["loss"] = loss
 
         if return_dict:

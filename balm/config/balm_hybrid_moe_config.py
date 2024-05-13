@@ -27,11 +27,12 @@ from typing import Optional
 from .base import BaseConfig
 
 
-class BalmMoEConfig(BaseConfig):
+class BalmHybridMoEConfig(BaseConfig):
     def __init__(
         self,
         embed_dim: int = 320,
         ffn_dim: int = 1280,
+        residual_ffn_dim: int = 1280,
         num_layers: int = 6,
         num_heads: int = 20,
         num_experts: int = 8,
@@ -41,6 +42,7 @@ class BalmMoEConfig(BaseConfig):
         expert_capacity_multiplier: float = 1.5,
         num_shared_experts: int = 0,
         activation: str = "swiglu",
+        expert_activation: str = "gelu",
         positional_embedding_type: str = "rotary",
         pre_norm: bool = True,
         router_z_loss_coef: float = 1e-3,
@@ -155,6 +157,7 @@ class BalmMoEConfig(BaseConfig):
         super().__init__()
         self.embed_dim = int(embed_dim)
         self.ffn_dim = int(ffn_dim)
+        self.residual_ffn_dim = int(residual_ffn_dim)
         self.num_layers = int(num_layers)
         self.num_heads = int(num_heads)
         self.num_experts = int(num_experts)
@@ -177,6 +180,11 @@ class BalmMoEConfig(BaseConfig):
                 f"Invalid FFN activation: {activation}. Options are 'swiglu', 'relu', or 'gelu'."
             )
         self.activation = activation.lower()
+        if expert_activation.lower() not in ["relu", "gelu"]:
+            raise ValueError(
+                f"Invalid expert activation: {expert_activation}. Options are 'relu' or 'gelu'."
+            )
+        self.expert_activation = expert_activation.lower()
         self.pre_norm = bool(pre_norm)
         self.router_z_loss_coef = float(router_z_loss_coef)
         self.router_aux_loss_coef = float(router_aux_loss_coef)
