@@ -138,20 +138,26 @@ class DenseTransformerLayer(nn.Module):
         token_embedding_dropout: float = 0.0,
         layer_norm_eps: float = 1e-5,
         activation: str = "swiglu",
-        positional_embedding_type: str = "rotary",
+        positional_embedding_type: Optional[str] = "rotary",
         pre_norm: bool = True,
     ):
         super().__init__()
         self.pre_norm = pre_norm
 
         # embeddings
-        if positional_embedding_type.lower() == "rotary":
+        if positional_embedding_type is None:
+            self.positional_embeddings = None
+        elif positional_embedding_type.lower() == "rotary":
             self.positional_embeddings = RotaryPositionalEmbedding(
                 embed_dim, max_length
             )
-        else:
+        elif positional_embedding_type.lower() == "relative":
             self.positional_embeddings = RelativePositionalEmbedding(
                 embed_dim, max_length
+            )
+        else:
+            raise ValueError(
+                f"Invalid positional embedding type: {positional_embedding_type}. Valid options are 'rotary', 'relative', or None."
             )
 
         # norm
@@ -204,7 +210,8 @@ class DenseTransformerLayer(nn.Module):
             x = self.norm1(x)
 
         # positional embeddings
-        x = self.embedding_dropout(self.positional_embeddings(x))
+        if self.positional_embeddings is not None:
+            x = self.embedding_dropout(self.positional_embeddings(x))
 
         # attention
         x = self.attention(
@@ -1114,7 +1121,8 @@ class SparseTransformerLayer(nn.Module):
 
 class HybridSparseTransformerLayer(nn.Module):
     """
-    Hybrid sparse transformer layer. Inspired by Snowflake's `Arctic model`_.
+    Hybrid sparse transformer layer, inspired by Snowflake's `Arctic model`_.
+    The model has a dense transformer and a sparse residual connection.
 
     .. _Arctic model:
         https://www.snowflake.com/blog/arctic-open-efficient-foundation-language-models-snowflake/
@@ -1132,7 +1140,7 @@ class HybridSparseTransformerLayer(nn.Module):
         num_shared_experts: int = 0,
         top_k: int = 2,
         activation: str = "swiglu",
-        expert_activation: str = "swiglu",
+        expert_activation: str = "gelu",
         dropout: float = 0.1,
         attention_dropout: float = 0.0,
         expert_ffn_dropout: float = 0.0,
@@ -1148,6 +1156,21 @@ class HybridSparseTransformerLayer(nn.Module):
     ):
         super().__init__()
 
+        # positional embedding
+        if positional_embedding_type.lower() == "rotary":
+            self.positional_embeddings = RotaryPositionalEmbedding(
+                embed_dim, max_length
+            )
+        elif positional_embedding_type.lower() == "relative":
+            self.positional_embeddings = RelativePositionalEmbedding(
+                embed_dim, max_length
+            )
+        else:
+            raise ValueError(
+                f"Invalid positional embedding type: {positional_embedding_type}. Valid options are 'rotary' or 'relative'."
+            )
+        self.embedding_dropout = nn.Dropout(token_embedding_dropout)
+
         # dense transformer
         self.dense_transformer = DenseTransformerLayer(
             embed_dim=embed_dim,
@@ -1158,7 +1181,7 @@ class HybridSparseTransformerLayer(nn.Module):
             token_embedding_dropout=token_embedding_dropout,
             layer_norm_eps=layer_norm_eps,
             activation=activation,
-            positional_embedding_type=positional_embedding_type,
+            positional_embedding_type=None,
             pre_norm=pre_norm,
         )
 
@@ -1167,25 +1190,18 @@ class HybridSparseTransformerLayer(nn.Module):
         self.sparse_residual = SparseMLP(
             embed_dim=embed_dim,
             ffn_dim=residual_ffn_dim,
-            max_length=max_length,
             num_experts=num_experts,
             expert_capacity=expert_capacity,
             num_shared_experts=num_shared_experts,
             top_k=top_k,
-            dropout=dropout,
-            attention_dropout=attention_dropout,
             expert_ffn_dropout=expert_ffn_dropout,
-            token_embedding_dropout=token_embedding_dropout,
-            layer_norm_eps=layer_norm_eps,
-            activation=activation,
-            expert_activation=expert_activation,
-            positional_embedding_type=positional_embedding_type,
-            pre_norm=pre_norm,
+            activation=expert_activation,
             router_dtype=router_dtype,
             router_bias=router_bias,
             router_jitter=router_jitter,
             router_ignore_padding_tokens=router_ignore_padding_tokens,
-            expert_choice_router=expert_choice_router,
+            router_class=ExpertChoiceRouter if expert_choice_router else TopKRouter,
+            expert_class=Expert,
         )
 
     def forward(
@@ -1233,6 +1249,9 @@ class HybridSparseTransformerLayer(nn.Module):
         .. _here:
             https://pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html#torch.nn.MultiheadAttention.forward
         """
+        # positional embeddings
+        x = self.embedding_dropout(self.positional_embeddings(x))
+
         # residual connection
         residual, (router_logits, _) = self.sparse_residual(self.residual_norm(x))
 
@@ -1245,8 +1264,6 @@ class HybridSparseTransformerLayer(nn.Module):
         )
         if need_weights:
             x, attn = x
-        else:
-            x = x[0]
 
         # add residual
         x = x + residual
