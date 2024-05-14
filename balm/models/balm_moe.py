@@ -287,6 +287,7 @@ class BalmMoEForMaskedLM(BalmBase):
     """
 
     config_class = BalmMoEConfig
+    base_model_prefix = "balm"
 
     def __init__(
         self,
@@ -405,6 +406,7 @@ class BalmMoEForSequenceClassification(BalmBase):
     """
 
     config_class = BalmMoEConfig
+    base_model_prefix = "balm"
 
     def __init__(
         self,

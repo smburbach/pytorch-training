@@ -213,6 +213,7 @@ class BalmHybridMoEForMaskedLM(BalmBase):
     """
 
     config_class = BalmHybridMoEConfig
+    base_model_prefix = "balm"
 
     def __init__(
         self,

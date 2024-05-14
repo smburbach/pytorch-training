@@ -46,6 +46,11 @@ class BalmBase(nn.Module):
     def num_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
+    def freeze_base_model(self, base_model: str = "balm"):
+        base_model = getattr(self, base_model)
+        for param in base_model.parameters():
+            param.requires_grad = False
+
     def save_pretrained(self, save_directory: str, max_shard_size: str = "10GB"):
         """
         Save the model's state dict to a directory.
