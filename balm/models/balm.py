@@ -140,6 +140,7 @@ class BalmForMaskedLM(BalmBase):
     """
 
     config_class = BalmConfig
+    base_model_prefix = "balm"
 
     def __init__(
         self,
@@ -226,6 +227,7 @@ class BalmForSequenceClassification(BalmBase):
     """
 
     config_class = BalmConfig
+    base_model_prefix = "balm"
 
     def __init__(
         self,
