@@ -114,17 +114,12 @@ class Tokenizer(TokenizerBase):
         """
         super().__init__(vocab)
         self.max_length = model_max_length
-        # self.pad_to_max_length = pad_to_max_length
-        # self.prepend_bos = prepend_bos
-        # self.append_eos = append_eos
         self.tok_to_idx = self.vocab
 
         self.unk_token = unk_token
         self.pad_token = pad_token
         self.cls_token = cls_token
         self.mask_token = mask_token
-        # self.sep_token = sep_token
-        # self.bos_token = bos_token
         self.eos_token = eos_token
         self.all_special_tokens = [
             eos_token,
@@ -132,8 +127,6 @@ class Tokenizer(TokenizerBase):
             pad_token,
             cls_token,
             mask_token,
-            # sep_token,
-            # bos_token,
         ]
         if additional_special_tokens is not None:
             self.all_special_tokens.extend(additional_special_tokens)
@@ -145,8 +138,6 @@ class Tokenizer(TokenizerBase):
         self.pad_idx = self.get_idx(pad_token)
         self.cls_idx = self.get_idx(cls_token)
         self.mask_idx = self.get_idx(mask_token)
-        # self.sep_idx = self.get_idx(sep_token)
-        # self.bos_idx = self.get_idx(bos_token)
         self.eos_idx = self.get_idx(eos_token)
         self.all_special_tokens_idx = [self.get_idx(t) for t in self.all_special_tokens]
         self.all_nonspecial_tokens_idx = [
@@ -331,7 +322,6 @@ class Tokenizer(TokenizerBase):
             return list(
                 itertools.chain.from_iterable(
                     (
-                        # self._tokenize(token)
                         token.split()
                         if token not in self.unique_no_split_tokens
                         else [token]
