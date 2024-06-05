@@ -48,15 +48,15 @@ class BalmBase(nn.Module):
 
     def freeze_base_model(self, base_model: Optional[str] = None):
         if base_model is None:
-            if not hasattr(self, "base_model_prefix"):
+            if not hasattr(self.__class__, "base_model_prefix"):
                 raise ValueError(
-                    f"{self.__class__.__name__} does not have a base model prefix, so you need to supply base_model."
+                    f"{self.__class__.__name__} does not have a default base model prefix, so you need to provide `base_model`."
                 )
-            base_model = self.base_model_prefix
+            base_model = getattr(self, self.__class__.base_model_prefix)
         else:
             if not hasattr(self, base_model):
                 raise ValueError(
-                    f"{self.__class__.__name__} does not have the supplied base model {base_model}."
+                    f"This model instance does not have the supplied base model ({base_model})."
                 )
             base_model = getattr(self, base_model)
         for param in base_model.parameters():
