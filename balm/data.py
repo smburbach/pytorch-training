@@ -22,10 +22,13 @@
 #
 
 
+import csv
+import json
 import os
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
+import pandas as pd
 import polars as pl
 import torch
 
@@ -40,8 +43,12 @@ __all__ = [
 
 
 class Dataset:
-    def __init__(self, data: Dict[str, Iterable[str]]):
-        self.data = pl.DataFrame(data)
+    def __init__(self, data: Union[Dict[str, Iterable[str]], pl.DataFrame]):
+        if isinstance(data, pd.DataFrame):
+            data = pl.from_pandas(data)
+        elif not isinstance(data, pl.DataFrame):
+            data = pl.DataFrame(data)
+        self.data = data
 
     def __getitem__(self, index: Union[int, str]):
         if isinstance(index, str) and index in self.data.columns:
@@ -261,7 +268,131 @@ class DataCollator:
         return inputs, labels
 
 
+class SequentialMaskingDataCollator:
+    def __init__(self, tokenizer: TokenizerBase):
+        self.tokenizer = tokenizer
+
+    def __call__(self, examples):
+        # convert to tensors if necessary
+        if isinstance(examples, dict):
+            batch = examples
+        elif isinstance(examples, torch.Tensor):
+            batch = {"input_ids": examples}
+        else:
+            if isinstance(examples[0], (list, tuple, np.ndarray)):
+                examples = [torch.tensor(e, dtype=torch.long) for e in examples]
+            # batch = {"input_ids": torch.stack(examples)}
+            batch = {"input_ids": torch.stack([d["input_ids"] for d in examples])}
+        input_ids = batch["input_ids"]
+
+        # Prepare masks for each sequence
+        masks = []
+        labels = []
+        for seq in input_ids:
+            seq_masks = []
+            seq_labels = []
+            for i in range(len(seq)):
+                mask = torch.zeros_like(seq)
+                mask[i] = 1
+                seq_masks.append(mask)
+
+                label = torch.full_like(seq, -100)
+                label[i] = seq[i]
+                seq_labels.append(label)
+            masks.append(torch.stack(seq_masks))
+            labels.append(torch.stack(seq_labels))
+
+        # Stack masks and labels to create a batch
+        batch["input_ids"] = input_ids.unsqueeze(1).expand(-1, input_ids.size(1), -1)
+        batch["labels"] = labels
+        # key padding mask
+        kp_mask = torch.zeros_like(batch["input_ids"])  # 1 for non-pad tokens
+        kp_mask[batch["input_ids"] == self.tokenizer.pad_idx] = 1  # 0 for pad tokens
+        batch["key_padding_mask"] = kp_mask.bool()
+
+        return batch
+
+
 def load_dataset(
+    path: str,
+    data_files: Dict[str, str],
+    strip_lines: bool = True,
+    preprocess_fn: Optional[Callable] = None,
+):
+    """
+    Loads a dataset.
+
+    Parameters
+    ----------
+    path : str
+        The type of dataset to load. Options are:
+            - "text": load a text dataset
+            - "csv": load a CSV dataset
+            - "tsv": load a TSV dataset
+            - "df": load a pandas or polars ``DataFrame`` dataset
+            - "json": load a JSON dataset
+            - "parquet": load a Parquet dataset
+
+    data_files : Dict[str, str]
+        A ``dict`` mapping dataset names to a file or directory.
+        If a directory is provided, the dataset will be loaded from all
+        files in the directory.
+
+    strip_lines : bool
+        Whether to strip lines. Used only for text datasets.
+
+    preprocess_fn : Optional[Callable]
+        A function to preprocess the dataset. Optional.
+        For text datasets, this function should accept and return a single
+        line of the text file (as a string). For CSV and TSV datasets,
+        this function should accept and return a single row of the CSV or
+        TSV file (as a dictionary mapping column names to values).
+
+    Returns
+    -------
+    DatasetDict
+        The dataset.
+    """
+    path = path.lower()
+    if path == "text":
+        return _load_text_dataset(
+            path=path,
+            data_files=data_files,
+            strip_lines=strip_lines,
+            preprocess_fn=preprocess_fn,
+        )
+    elif path == "csv":
+        return _load_tabular_dataset(
+            data_files=data_files,
+            preprocess_fn=preprocess_fn,
+            sep=",",
+        )
+    elif path == "tsv":
+        return _load_tabular_dataset(
+            data_files=data_files,
+            preprocess_fn=preprocess_fn,
+            sep="\t",
+        )
+    elif path in ["df", "dataframe"]:
+        return _load_dataframe_dataset(
+            dataframes=data_files,
+            preprocess_fn=preprocess_fn,
+        )
+    elif path == "json":
+        return _load_json_dataset(
+            data_files=data_files,
+            preprocess_fn=preprocess_fn,
+        )
+    elif path == "parquet":
+        return _load_parquet_dataset(
+            data_files=data_files,
+            preprocess_fn=preprocess_fn,
+        )
+    else:
+        raise ValueError(f"Invalid dataset type: {path}")
+
+
+def _load_text_dataset(
     path: str,
     data_files: Dict[str, str],
     strip_lines: bool = True,
@@ -285,4 +416,103 @@ def load_dataset(
                     file_data = [preprocess_fn(line) for line in file_data]
                 data.extend(file_data)
         dataset_dict[name] = Dataset({path: data})
+    return DatasetDict(dataset_dict)
+
+
+def _load_tabular_dataset(
+    data_files: Dict[str, str],
+    preprocess_fn: Optional[Callable] = None,
+    sep: str = ",",
+):
+    dataset_dict = {}
+    for name, files in data_files.items():
+        if os.path.isdir(files):
+            files = [os.path.join(files, f) for f in os.listdir(files)]
+        elif os.path.isfile(files):
+            files = [files]
+        else:
+            raise ValueError(f"Invalid file or directory: {files}")
+        data = []
+        for file in files:
+            with open(file, "r") as f:
+                reader = csv.DictReader(f, delimiter=sep)
+                for row in reader:
+                    if preprocess_fn is not None:
+                        row = preprocess_fn(row)
+                    data.append(row)
+        dataset_dict[name] = Dataset(data)
+    return DatasetDict(dataset_dict)
+
+
+def _load_dataframe_dataset(
+    dataframes: Dict[str, str],
+    preprocess_fn: Optional[Callable] = None,
+):
+    dataset_dict = {}
+    for name, df in dataframes.items():
+        if isinstance(df, pl.DataFrame):
+            is_pandas = False
+            iter_kwargs = {"named": True}
+        elif isinstance(df, pd.DataFrame):
+            is_pandas = True
+            iter_kwargs = {}
+        else:
+            raise ValueError(f"Invalid dataframe type: {type(df)}")
+        if preprocess_fn is None:
+            dataset_dict[name] = Dataset(df)
+        else:
+            data = []
+            for row in df.iterrows(**iter_kwargs):
+                if is_pandas:
+                    _, row = row
+                row = preprocess_fn(row)
+                data.append(row)
+            dataset_dict[name] = Dataset(df)
+    return DatasetDict(dataset_dict)
+
+
+def _load_json_dataset(
+    data_files: Dict[str, str],
+    preprocess_fn: Optional[Callable] = None,
+):
+    dataset_dict = {}
+    for name, files in data_files.items():
+        if os.path.isdir(files):
+            files = [os.path.join(files, f) for f in os.listdir(files)]
+        elif os.path.isfile(files):
+            files = [files]
+        else:
+            raise ValueError(f"Invalid file or directory: {files}")
+        data = []
+        for file in files:
+            with open(file, "r") as f:
+                json_data = json.load(f)
+                for json_elem in json_data:
+                    if preprocess_fn is not None:
+                        json_elem = preprocess_fn(json_elem)
+                    data.append(json_elem)
+        dataset_dict[name] = Dataset(data)
+    return DatasetDict(dataset_dict)
+
+
+def _load_parquet_dataset(
+    data_files: Dict[str, str],
+    preprocess_fn: Optional[Callable] = None,
+):
+    dataset_dict = {}
+    for name, files in data_files.items():
+        if os.path.isdir(files):
+            files = [os.path.join(files, f) for f in os.listdir(files)]
+        elif os.path.isfile(files):
+            files = [files]
+        else:
+            raise ValueError(f"Invalid file or directory: {files}")
+        df = pl.read_parquet(files)
+        if preprocess_fn is None:
+            dataset_dict[name] = Dataset(df)
+        else:
+            data = []
+            for row in df.iterrows(named=True):
+                data.append(preprocess_fn(row))
+            dataset_dict[name] = Dataset(data)
     return DatasetDict(dataset_dict)
