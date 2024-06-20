@@ -21,6 +21,9 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #
 
+# deepspeed resources
+# https://www.deepspeed.ai/getting-started/
+# https://github.com/microsoft/DeepSpeed/blob/master/docs/_tutorials/bert-pretraining.md 
 
 import json
 import math
@@ -44,8 +47,10 @@ from ..modules import MaskedLMOutput
 
 # from ..tokenizer import TokenizerBase
 # from .training_arguments import TrainingArguments
-from .training_utils import EvalOutput, EvalPrediction, get_scheduler
+from .training_utils import EvalOutput, EvalPrediction, get_scheduler, is_rank_0
 
+import logging
+logging.getLogger().setLevel(logging.WARNING)
 
 class Trainer:
     def __init__(
@@ -71,7 +76,8 @@ class Trainer:
         adam_beta2: float = 0.999,
         adam_epsilon: float = 1e-8,
         deepspeed: bool = False,
-        deepspeed_config: Optional[str] = None,
+        deepspeed_args = None,
+        deepspeed_config = None,
         use_cpu: bool = False,
         seed: Optional[int] = 42,
         compute_metrics: Optional[Callable[[EvalPrediction], Dict]] = None,
@@ -133,6 +139,7 @@ class Trainer:
         self.adam_beta2 = adam_beta2
         self.adam_epsilon = adam_epsilon
         self.deepspeed = deepspeed
+        self.deepspeed_args = deepspeed_args
         self.deepspeed_config = deepspeed_config
         self.compute_metrics = compute_metrics
         self.use_cpu = use_cpu
@@ -232,6 +239,7 @@ class Trainer:
         )
 
     def train(self):
+
         if self.use_wandb:
             wandb.init(
                 project=self.wandb_project,
@@ -242,40 +250,57 @@ class Trainer:
             wandb.define_metric("global_step")
             wandb.define_metric("*", step_metric="global_step", step_sync=True)
 
-        self.model, self.optimizer = self.wrap_model()
+        self.model, self.optimizer, self.scheduler = self.wrap_model()
         self.model.train()
 
-        self.scheduler = get_scheduler(
-            optimizer=self.optimizer,
-            num_warmup_steps=self.num_warmup_steps,
-            num_training_steps=self.num_train_steps,
-        )
+        if self.scheduler is None:
+            self.scheduler = get_scheduler(
+                optimizer=self.optimizer,
+                num_warmup_steps=self.num_warmup_steps,
+                num_training_steps=self.num_train_steps,
+            )
 
         completed_steps = 0
         pbar = tqdm(total=self.num_train_steps, unit="step", desc="Training")
         for epoch in range(self.num_epochs):
             for batch in self.train_dataloader:
-                self.optimizer.zero_grad()
-                collated = self.data_collator(batch)
-                inputs = self.place_inputs(collated)
+                
+                # zero grad
+                if not self.deepspeed:
+                    self.optimizer.zero_grad()
+                    collated = self.data_collator(batch)
+                    inputs = self.place_inputs(collated)
+                else:
+                    collated = self.data_collator(batch)
+                    inputs = self.place_inputs(collated)
+                
+                # forward pass
                 outputs = self.model(
                     input_ids=inputs["input_ids"],
                     labels=inputs.get("labels", None),
                     attention_mask=inputs.get("attention_mask", None),
                     key_padding_mask=inputs.get("key_padding_mask", None),
                 )
+                
+                # loss
                 if self.device_count > 1:
                     outputs["raw_loss"] = outputs["loss"].clone()
                     outputs["loss"] = outputs["loss"].mean()
                 loss = outputs["loss"]
-                loss.backward()
-                self.optimizer.step()
-                self.scheduler.step()
+
+                # backward pass
+                if self.deepspeed:
+                    self.model.backward(loss)
+                    self.model.step()
+                else:
+                    loss.backward()
+                    self.optimizer.step()
+                    self.scheduler.step()
 
                 # logging
                 completed_steps += 1
                 pbar.update(1)
-                if completed_steps % self.logging_steps == 0:
+                if completed_steps % self.logging_steps == 0 and is_rank_0():
                     self.print_train_log(
                         steps=completed_steps,
                         outputs=outputs,
@@ -479,11 +504,14 @@ class Trainer:
             import deepspeed
 
             model_params = [p for p in self.model.parameters() if p.requires_grad]
-            model, optimizer, _, _ = deepspeed.initialize(
+            print('initializing deepspeed...')
+            model, optimizer, _, lr_scheduler = deepspeed.initialize(
                 model=self.model,
                 model_parameters=model_params,
-                config="path_to_deepspeed_config.json",
+                config=self.deepspeed_config,
             )
+            # note that when using deepspeed, you should never call the optimizer or lr_scheduler manually
+            # all calls should be made on the model engine (saved as the 'model' variable)
         else:
             model = self.model.to(self.device)
             if self.device_count > 1 and torch.cuda.is_available():
@@ -495,7 +523,8 @@ class Trainer:
                 betas=(self.adam_beta1, self.adam_beta2),
                 eps=self.adam_epsilon,
             )
-        return model, optimizer
+            lr_scheduler = None
+        return model, optimizer, lr_scheduler
 
     def unwrap_model(self, model: nn.Module) -> nn.Module:
         """
@@ -508,7 +537,7 @@ class Trainer:
         ----------
         model : nn.Module
             The model to unwrap.
-
+ 
         Returns
         -------
         nn.Module

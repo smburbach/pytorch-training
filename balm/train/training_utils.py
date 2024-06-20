@@ -29,6 +29,7 @@ from typing import Dict, NamedTuple, Optional, Tuple, Union
 
 import numpy as np
 import torch
+import os
 from torch.optim.lr_scheduler import LambdaLR
 
 # class ExplicitEnum(Enum):
@@ -116,6 +117,8 @@ from torch.optim.lr_scheduler import LambdaLR
 #     torch.manual_seed(seed)
 #     torch.cuda.manual_seed_all(seed)  # safe even if cuda isn't available
 
+def is_rank_0() -> bool:
+    return int(os.environ.get("RANK", "0")) == 0
 
 def _scheduler_lambda(
     current_step: int, *, num_warmup_steps: int, num_training_steps: int
