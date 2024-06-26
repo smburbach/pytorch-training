@@ -268,11 +268,9 @@ class Trainer:
                 # zero grad
                 if not self.deepspeed:
                     self.optimizer.zero_grad()
-                    collated = self.data_collator(batch)
-                    inputs = self.place_inputs(collated)
-                else:
-                    collated = self.data_collator(batch)
-                    inputs = self.place_inputs(collated)
+
+                collated = self.data_collator(batch)
+                inputs = self.place_inputs(collated)
                 
                 # forward pass
                 outputs = self.model(
@@ -283,9 +281,10 @@ class Trainer:
                 )
                 
                 # loss
-                if self.device_count > 1:
+                if self.device_count > 1 and not self.deepspeed:
                     outputs["raw_loss"] = outputs["loss"].clone()
                     outputs["loss"] = outputs["loss"].mean()
+                
                 loss = outputs["loss"]
 
                 # backward pass

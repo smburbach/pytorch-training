@@ -70,29 +70,42 @@ def main():
     )
     model = BalmForMaskedLM(config=config)
 
-    trainer = Trainer(
-        model=model,
-        data_collator=collator,
-        train_dataset=tokenized_dataset["train"],
-        eval_dataset=tokenized_dataset["eval"],
-        output_dir="./training_runs/save_tests",
-        # epochs=1,
-        logging_steps=5,
-        eval_steps=100,
-        warmup_steps=10,
-        max_steps=25,
-        # save_steps=15,
-        per_device_train_batch_size=32,
-        # use_cpu=True,
-        # use_wandb=True,
-        # wandb_project="test_wandb_logging",
-        # wandb_entity="bryanbriney",
-        run_name="save_test_001",
-        deepspeed=True,
-        deepspeed_args=args,
-        deepspeed_config=args.deepspeed_config
-    )
-    trainer.train()
+    for epoch in range(1):
+        for batch in train_dataloader:
+            
+            # forward pass
+            outputs = self.model(
+                input_ids=inputs["input_ids"],
+                labels=inputs.get("labels", None),
+                attention_mask=inputs.get("attention_mask", None),
+                key_padding_mask=inputs.get("key_padding_mask", None),
+            )
+
+            # 
+
+    # trainer = Trainer(
+    #     model=model,
+    #     data_collator=collator,
+    #     train_dataset=tokenized_dataset["train"],
+    #     eval_dataset=tokenized_dataset["eval"],
+    #     output_dir="./training_runs/save_tests",
+    #     # epochs=1,
+    #     logging_steps=5,
+    #     eval_steps=100,
+    #     warmup_steps=10,
+    #     max_steps=25,
+    #     # save_steps=15,
+    #     per_device_train_batch_size=32,
+    #     # use_cpu=True,
+    #     # use_wandb=True,
+    #     # wandb_project="test_wandb_logging",
+    #     # wandb_entity="bryanbriney",
+    #     run_name="save_test_001",
+    #     deepspeed=True,
+    #     deepspeed_args=args,
+    #     deepspeed_config=args.deepspeed_config
+    # )
+    # trainer.train()
 
 if __name__ == "__main__":
     main()

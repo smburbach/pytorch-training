@@ -43,7 +43,7 @@ def main():
     config = BalmConfig(
         embed_dim=320,
         ffn_dim=320 * 4,
-        num_layers=12,
+        num_layers=6,
         num_heads=20,
         vocab_size=tokenizer.vocab_size,
     )
