@@ -33,5 +33,10 @@
         "warmup_num_steps": 10,
         "total_num_steps": 100
       }
+    },
+    "logging": {
+      "enabled": true,
+      "level": "info",
+      "log_file": "deepspeed_log.txt"
     }
   }

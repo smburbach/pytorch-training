@@ -277,7 +277,7 @@ class Trainer:
                     input_ids=inputs["input_ids"],
                     labels=inputs.get("labels", None),
                     attention_mask=inputs.get("attention_mask", None),
-                    key_padding_mask=inputs.get("key_padding_mask", None),
+                    #key_padding_mask=inputs.get("key_padding_mask", None),
                 )
                 
                 # loss

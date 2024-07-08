@@ -49,6 +49,7 @@ def main():
     )
     model = BalmForMaskedLM(config=config)
 
+
     trainer = Trainer(
         model=model,
         data_collator=collator,

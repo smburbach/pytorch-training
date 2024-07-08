@@ -60,7 +60,7 @@ def main():
 
     collator = DataCollator(tokenizer=tokenizer)
 
-    # # matched to ESM-2 8M
+    # matched to ESM-2 8M
     config = BalmConfig(
         embed_dim=320,
         ffn_dim=320 * 4,
