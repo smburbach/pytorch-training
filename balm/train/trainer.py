@@ -253,7 +253,8 @@ class Trainer:
         self.model, self.optimizer, self.scheduler = self.wrap_model()
         self.model.train()
 
-        if self.scheduler is None:
+        #if self.scheduler is None:
+        if not self.deepspeed:
             self.scheduler = get_scheduler(
                 optimizer=self.optimizer,
                 num_warmup_steps=self.num_warmup_steps,
@@ -277,7 +278,7 @@ class Trainer:
                     input_ids=inputs["input_ids"],
                     labels=inputs.get("labels", None),
                     attention_mask=inputs.get("attention_mask", None),
-                    #key_padding_mask=inputs.get("key_padding_mask", None),
+                    key_padding_mask=inputs.get("key_padding_mask", None),
                 )
                 
                 # loss
@@ -509,6 +510,9 @@ class Trainer:
                 model_parameters=model_params,
                 config=self.deepspeed_config,
             )
+            print("After DeepSpeed Initialization:")
+            for name, param in model.named_parameters():
+                print(f"Parameter: {name}, Device: {param.device}")
             # note that when using deepspeed, you should never call the optimizer or lr_scheduler manually
             # all calls should be made on the model engine (saved as the 'model' variable)
         else:

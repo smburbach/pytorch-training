@@ -3,7 +3,7 @@
       "stage": 1,
       "allgather_partitions": true,
       "allgather_bucket_size": 5e8,
-      "overlap_comm": false,
+      "overlap_comm": true,
       "reduce_scatter": true,
       "reduce_bucket_size": 5e8,
       "contiguous_gradients": true
@@ -33,10 +33,5 @@
         "warmup_num_steps": 10,
         "total_num_steps": 100
       }
-    },
-    "logging": {
-      "enabled": true,
-      "level": "info",
-      "log_file": "deepspeed_log.txt"
     }
   }
