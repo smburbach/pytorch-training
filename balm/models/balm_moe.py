@@ -443,7 +443,7 @@ class BalmMoEForSequenceClassification(BalmBase):
         labels: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
-        output_attentions: bool = False,
+        need_weights: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
     ) -> MaskedLMOutput:
@@ -459,31 +459,52 @@ class BalmMoEForSequenceClassification(BalmBase):
         torch.Tensor
             The output tensor. The shape is (batch_size, seq_len, vocab_size).
         """
-        x = self.balm(
+
+        outputs = self.balm(
             input_ids,
             attention_mask=attention_mask,
             key_padding_mask=key_padding_mask,
-            need_weights=output_attentions,
+            need_weights=need_weights,
         )
-        if output_attentions:
-            x, attn = x
-        logits = self.classifier(x)
+        x = outputs["last_hidden_state"]
 
-        classifier_loss = None
+        classifier_logits = self.classifier(x)
+        outputs["logits"] = classifier_logits
+
         if labels is not None:
-            classifier_loss = self.criterion(
-                logits.view(-1, logits.size(-1)),
-                labels.view(-1),
-            )
+            labels = labels.to(classifier_logits.device)
+            loss = self.criterion(classifier_logits, labels)
+            outputs["loss"] = loss
 
-        output = ClassifierOutput(
-            logits=logits,
-            loss=classifier_loss,
-        )
-        if output_attentions:
-            output.attentions = attn
-        if output_hidden_states:
-            output.hidden_states = x
         if return_dict:
-            return output.as_dict()
-        return output.as_tuple()
+            return outputs.as_dict()
+        return outputs.as_tuple()
+
+        # x = self.balm(
+        #     input_ids,
+        #     attention_mask=attention_mask,
+        #     key_padding_mask=key_padding_mask,
+        #     need_weights=output_attentions,
+        # )
+        # if output_attentions:
+        #     x, attn = x
+        # logits = self.classifier(x)
+
+        # classifier_loss = None
+        # if labels is not None:
+        #     classifier_loss = self.criterion(
+        #         logits.view(-1, logits.size(-1)),
+        #         labels.view(-1),
+        #     )
+
+        # output = ClassifierOutput(
+        #     logits=logits,
+        #     loss=classifier_loss,
+        # )
+        # if output_attentions:
+        #     output.attentions = attn
+        # if output_hidden_states:
+        #     output.hidden_states = x
+        # if return_dict:
+        #     return output.as_dict()
+        # return output.as_tuple()
