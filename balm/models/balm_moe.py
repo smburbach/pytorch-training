@@ -435,7 +435,7 @@ class BalmMoEForSequenceClassification(BalmBase):
             dropout=classifier_dropout,
             activation=classifier_activation,
         )
-        self.criterion = nn.CrossEntropyLoss(ignore_index=-100)
+        self.criterion = nn.CrossEntropyLoss()
 
     def forward(
         self,
