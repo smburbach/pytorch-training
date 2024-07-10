@@ -153,7 +153,7 @@ class BalmMoEModel(BalmBase):
         x: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
-        output_attentions: bool = False,
+        need_weights: bool = False,
         output_hidden_states: bool = False,
         output_router_logits: bool = False,
         output_expert_indexes: bool = False,
@@ -216,10 +216,10 @@ class BalmMoEModel(BalmBase):
                     x,
                     attention_mask=attention_mask,
                     key_padding_mask=key_padding_mask,
-                    need_weights=output_attentions,
+                    need_weights=need_weights,
                     output_router_logits=output_router_logits,
                 )
-                if output_attentions:
+                if need_weights:
                     x, attn, router_tuple = x
                     attn_weights.append(attn)
                 else:
@@ -233,9 +233,9 @@ class BalmMoEModel(BalmBase):
                 x = layer(
                     x,
                     attention_mask=attention_mask,
-                    need_weights=output_attentions,
+                    need_weights=need_weights,
                 )
-                if output_attentions:
+                if need_weights:
                     x, attn = x
                     attn_weights.append(attn)
                 if output_hidden_states:
@@ -260,7 +260,7 @@ class BalmMoEModel(BalmBase):
             router_z_loss=z_loss,
             router_aux_loss=aux_loss,
         )
-        if output_attentions:
+        if need_weights:
             # attentions: B x L x H x T x T
             attentions = torch.stack(attn_weights, 1)
             attentions = attentions * attention_mask[:, None, None, :, :]
