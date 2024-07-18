@@ -44,6 +44,7 @@ from tqdm.auto import tqdm
 
 from ..data import DataCollator, Dataset
 from ..modules import MaskedLMOutput
+from deepspeed.accelerator import get_accelerator
 
 # from ..tokenizer import TokenizerBase
 # from .training_arguments import TrainingArguments
@@ -76,8 +77,9 @@ class Trainer:
         adam_beta2: float = 0.999,
         adam_epsilon: float = 1e-8,
         deepspeed: bool = False,
-        deepspeed_args = None,
         deepspeed_config = None,
+        deepspeed_args = None,
+        local_rank = -1,
         use_cpu: bool = False,
         seed: Optional[int] = 42,
         compute_metrics: Optional[Callable[[EvalPrediction], Dict]] = None,
@@ -139,8 +141,9 @@ class Trainer:
         self.adam_beta2 = adam_beta2
         self.adam_epsilon = adam_epsilon
         self.deepspeed = deepspeed
-        self.deepspeed_args = deepspeed_args
         self.deepspeed_config = deepspeed_config
+        self.deepspeed_args = deepspeed_args
+        self.local_rank = local_rank
         self.compute_metrics = compute_metrics
         self.use_cpu = use_cpu
 
@@ -172,12 +175,18 @@ class Trainer:
 
     @cached_property
     def device(self):
-        if torch.cuda.is_available() and not self.use_cpu:
-            return torch.device("cuda")
-        # elif torch.backends.mps.is_available() and not self.use_cpu:
-        #     return torch.device("mps")
+        if self.deepspeed:
+            device = (torch.device(get_accelerator().device_name(), self.local_rank) if (self.local_rank > -1)
+              and get_accelerator().is_available() else torch.device("cpu"))
+            return device
         else:
-            return torch.device("cpu")
+            if torch.cuda.is_available() and not self.use_cpu:
+                return torch.device("cuda")
+            # elif torch.backends.mps.is_available() and not self.use_cpu:
+            #     return torch.device("mps")
+            else:
+                return torch.device("cpu")
+
 
     @cached_property
     def device_count(self):
@@ -220,12 +229,15 @@ class Trainer:
 
     @property
     def train_dataloader(self):
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.total_train_batch_size,
-            shuffle=True,
-            # collate_fn=self.data_collator,
-        )
+        if self.deepspeed:
+            return None
+        else:
+            return DataLoader(
+                self.train_dataset,
+                batch_size=self.total_train_batch_size,
+                shuffle=True,
+                # collate_fn=self.data_collator,
+            )
 
     @property
     def eval_dataloader(self):
@@ -250,7 +262,7 @@ class Trainer:
             wandb.define_metric("global_step")
             wandb.define_metric("*", step_metric="global_step", step_sync=True)
 
-        self.model, self.optimizer, self.scheduler = self.wrap_model()
+        self.model, self.optimizer, data_loader, self.scheduler = self.wrap_model()
         self.model.train()
 
         #if self.scheduler is None:
@@ -260,18 +272,20 @@ class Trainer:
                 num_warmup_steps=self.num_warmup_steps,
                 num_training_steps=self.num_train_steps,
             )
+            data_loader = self.train_dataloader
 
         completed_steps = 0
         pbar = tqdm(total=self.num_train_steps, unit="step", desc="Training")
         for epoch in range(self.num_epochs):
-            for batch in self.train_dataloader:
+            for batch in data_loader:
                 
                 # zero grad
                 if not self.deepspeed:
                     self.optimizer.zero_grad()
 
-                collated = self.data_collator(batch)
-                inputs = self.place_inputs(collated)
+                inputs = self.data_collator(batch)
+                #inputs = self.place_inputs(collated)
+                self.place_inputs(inputs)
                 
                 # forward pass
                 outputs = self.model(
@@ -282,6 +296,7 @@ class Trainer:
                 )
                 
                 # loss
+                print(outputs["loss"])
                 if self.device_count > 1 and not self.deepspeed:
                     outputs["raw_loss"] = outputs["loss"].clone()
                     outputs["loss"] = outputs["loss"].mean()
@@ -300,7 +315,7 @@ class Trainer:
                 # logging
                 completed_steps += 1
                 pbar.update(1)
-                if completed_steps % self.logging_steps == 0 and is_rank_0():
+                if completed_steps % self.logging_steps == 0: #and is_rank_0():
                     self.print_train_log(
                         steps=completed_steps,
                         outputs=outputs,
@@ -505,14 +520,13 @@ class Trainer:
 
             model_params = [p for p in self.model.parameters() if p.requires_grad]
             print('initializing deepspeed...')
-            model, optimizer, _, lr_scheduler = deepspeed.initialize(
+            model, optimizer, data_loader, lr_scheduler = deepspeed.initialize(
                 model=self.model,
                 model_parameters=model_params,
-                config=self.deepspeed_config,
+                # config=self.deepspeed_config,
+                args=self.deepspeed_args,
+                training_data=self.train_dataset,
             )
-            print("After DeepSpeed Initialization:")
-            for name, param in model.named_parameters():
-                print(f"Parameter: {name}, Device: {param.device}")
             # note that when using deepspeed, you should never call the optimizer or lr_scheduler manually
             # all calls should be made on the model engine (saved as the 'model' variable)
         else:
@@ -527,7 +541,8 @@ class Trainer:
                 eps=self.adam_epsilon,
             )
             lr_scheduler = None
-        return model, optimizer, lr_scheduler
+            data_loader = None
+        return model, optimizer, data_loader, lr_scheduler
 
     def unwrap_model(self, model: nn.Module) -> nn.Module:
         """
@@ -551,11 +566,12 @@ class Trainer:
         return model
 
     def place_inputs(self, collated: Dict):
-        placed = {}
+        # placed = {}
         for key, value in collated.items():
-            value = value.to(self.device)
-            placed[key] = value
-        return placed
+            collated[key] = value.to(self.device)
+            #value = value.to(self.device)
+        #     placed[key] = value
+        # return placed
 
     @staticmethod
     def set_seed(seed: int):

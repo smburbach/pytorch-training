@@ -89,8 +89,9 @@ def main():
         # wandb_entity="bryanbriney",
         run_name="save_test_001",
         deepspeed=True,
+        deepspeed_config=args.deepspeed_config,
+        local_rank=args.local_rank,
         deepspeed_args=args,
-        deepspeed_config=args.deepspeed_config
     )
     trainer.train()
 

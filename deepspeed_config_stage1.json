@@ -1,14 +1,7 @@
 {
     "zero_optimization": {
-      "stage": 1,
-      "allgather_partitions": true,
-      "allgather_bucket_size": 5e8,
-      "overlap_comm": true,
-      "reduce_scatter": true,
-      "reduce_bucket_size": 5e8,
-      "contiguous_gradients": true
+      "stage": 1
     },
-    "train_batch_size": 128,
     "train_micro_batch_size_per_gpu": 32,
     "gradient_accumulation_steps": 1,
     "gradient_clipping": 1.0,
