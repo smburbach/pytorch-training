@@ -46,6 +46,10 @@ from ..modules import MaskedLMOutput
 # from .training_arguments import TrainingArguments
 from .training_utils import EvalOutput, EvalPrediction, get_scheduler
 
+# accelerate
+from accelerate import Accelerator
+accelerator = Accelerator()
+
 
 class Trainer:
     def __init__(
@@ -70,8 +74,8 @@ class Trainer:
         adam_beta1: float = 0.9,
         adam_beta2: float = 0.999,
         adam_epsilon: float = 1e-8,
-        deepspeed: bool = False,
-        deepspeed_config: Optional[str] = None,
+        accelerate: bool = False,
+        #deepspeed_config: Optional[str] = None,
         use_cpu: bool = False,
         seed: Optional[int] = 42,
         compute_metrics: Optional[Callable[[EvalPrediction], Dict]] = None,
@@ -132,8 +136,8 @@ class Trainer:
         self.adam_beta1 = adam_beta1
         self.adam_beta2 = adam_beta2
         self.adam_epsilon = adam_epsilon
-        self.deepspeed = deepspeed
-        self.deepspeed_config = deepspeed_config
+        self.accelerate = accelerate
+        #self.deepspeed_config = deepspeed_config
         self.compute_metrics = compute_metrics
         self.use_cpu = use_cpu
 
@@ -165,10 +169,10 @@ class Trainer:
 
     @cached_property
     def device(self):
-        if torch.cuda.is_available() and not self.use_cpu:
+        if self.accelerate:
+            return accelerator.device
+        elif torch.cuda.is_available() and not self.use_cpu:
             return torch.device("cuda")
-        # elif torch.backends.mps.is_available() and not self.use_cpu:
-        #     return torch.device("mps")
         else:
             return torch.device("cpu")
 
@@ -242,33 +246,42 @@ class Trainer:
             wandb.define_metric("global_step")
             wandb.define_metric("*", step_metric="global_step", step_sync=True)
 
-        self.model, self.optimizer = self.wrap_model()
+        self.model, self.optimizer, self.scheduler, train_dataloader = self.wrap_model()
         self.model.train()
-
-        self.scheduler = get_scheduler(
-            optimizer=self.optimizer,
-            num_warmup_steps=self.num_warmup_steps,
-            num_training_steps=self.num_train_steps,
-        )
 
         completed_steps = 0
         pbar = tqdm(total=self.num_train_steps, unit="step", desc="Training")
         for epoch in range(self.num_epochs):
-            for batch in self.train_dataloader:
+            for batch in train_dataloader:
+                
+                # zero optimizer gradients
                 self.optimizer.zero_grad()
-                collated = self.data_collator(batch)
-                inputs = self.place_inputs(collated)
+                
+                # inputs
+                inputs = self.data_collator(batch, self.device)
+                if not accelerate:
+                    inputs = self.place_inputs(inputs)
+
+                # pass through model
                 outputs = self.model(
                     input_ids=inputs["input_ids"],
                     labels=inputs.get("labels", None),
                     attention_mask=inputs.get("attention_mask", None),
                     key_padding_mask=inputs.get("key_padding_mask", None),
                 )
+                
+                # loss
                 if self.device_count > 1:
                     outputs["raw_loss"] = outputs["loss"].clone()
                     outputs["loss"] = outputs["loss"].mean()
                 loss = outputs["loss"]
-                loss.backward()
+                
+                if self.accelerate:
+                    accelerator.backward(loss)
+                else:
+                    loss.backward()
+                
+                # steps
                 self.optimizer.step()
                 self.scheduler.step()
 
@@ -475,27 +488,30 @@ class Trainer:
             )
 
     def wrap_model(self) -> Tuple[nn.Module, torch.optim.Optimizer]:
-        if self.deepspeed:
-            import deepspeed
+        # optimizer
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay,
+            betas=(self.adam_beta1, self.adam_beta2),
+            eps=self.adam_epsilon,
+        )
 
-            model_params = [p for p in self.model.parameters() if p.requires_grad]
-            model, optimizer, _, _ = deepspeed.initialize(
-                model=self.model,
-                model_parameters=model_params,
-                config="path_to_deepspeed_config.json",
-            )
+        # scheduler
+        self.scheduler = get_scheduler(
+            optimizer=self.optimizer,
+            num_warmup_steps=self.num_warmup_steps,
+            num_training_steps=self.num_train_steps,
+        )
+        
+        # wrap model / send to device
+        if self.accelerate:
+            return accelerator.prepare(self.model, self.optimizer, self.scheduler, self.train_dataloader)
         else:
             model = self.model.to(self.device)
             if self.device_count > 1 and torch.cuda.is_available():
                 model = nn.DataParallel(model)
-            optimizer = torch.optim.AdamW(
-                model.parameters(),
-                lr=self.learning_rate,
-                weight_decay=self.weight_decay,
-                betas=(self.adam_beta1, self.adam_beta2),
-                eps=self.adam_epsilon,
-            )
-        return model, optimizer
+            return model, optimizer, self.scheduler, self.train_dataloader
 
     def unwrap_model(self, model: nn.Module) -> nn.Module:
         """
